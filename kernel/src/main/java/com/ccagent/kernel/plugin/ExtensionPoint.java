@@ -15,4 +15,11 @@ public interface ExtensionPoint {
      * @param context 插件运行上下文
      */
     void init(PluginContext context);
+
+    /**
+     * 插件清理（默认空实现）
+     * <p>插件卸载或 init 失败回滚时调用，插件在此释放 init 阶段创建的线程池等资源。
+     * init 失败时 PluginManager 会调用此方法，清理半初始化资源。</p>
+     */
+    default void shutdown() {}
 }

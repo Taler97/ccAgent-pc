@@ -33,4 +33,22 @@ public interface PluginManager {
      * 获取插件加载报告（包含成功/失败详情）
      */
     PluginLoadReport getLoadReport();
+
+    /**
+     * 重新加载指定类型的所有扩展点（默认与首次加载一致）
+     * <p>关闭旧隔离类加载器 → 重新扫描 → 返回新实例列表，由调用方替换旧实例完成热插拔。</p>
+     */
+    default List<ExtensionPoint> reloadExtensions(PluginType type, PluginContext context) {
+        return loadExtensions(type, context);
+    }
+
+    /**
+     * 关闭全部隔离类加载器（卸载插件，类可被 GC 回收）
+     */
+    default void closeAllLoaders() {}
+
+    /**
+     * 关闭插件管理器（释放隔离类加载器）
+     */
+    default void shutdown() {}
 }

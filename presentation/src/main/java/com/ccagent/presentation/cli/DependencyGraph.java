@@ -117,6 +117,11 @@ public class DependencyGraph {
                 governanceModule.getEventBus()
         );
 
+        // 热插拔：治理监听器重载后，原子替换 GovernanceGateway 的引用
+        governanceModule.setListenerChangeListener(bundle ->
+                orchestrationModule.getGovernanceGatewayImpl().replaceListeners(
+                        bundle.rollbackManager(), bundle.auditor(), bundle.tokenStatsService()));
+
         // 11. 输出插件加载报告
         PluginLoadReport report = pluginManager.getLoadReport();
         System.out.println(report.toReportText());
@@ -147,11 +152,14 @@ public class DependencyGraph {
     }
 
     public void shutdown() {
-        if (governanceModule != null && governanceModule.getAuditor() != null) {
-            governanceModule.getAuditor().shutdown();
+        if (governanceModule != null) {
+            governanceModule.shutdown();
         }
         if (orchestrationModule != null && orchestrationModule.getDispatcher() != null) {
             orchestrationModule.getDispatcher().shutdown();
+        }
+        if (pluginManager != null) {
+            pluginManager.shutdown();
         }
     }
 }

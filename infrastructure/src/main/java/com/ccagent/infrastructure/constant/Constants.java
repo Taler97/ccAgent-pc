@@ -49,4 +49,6 @@ public final class Constants {
     public static final String COMPRESSOR_PROMPT = PROMPTS_DIR + "/compressor.md";
     /** 产物缓存目录 */
     public static final String ARTIFACT_CACHE_DIR = BASE_DIR + "/cache/artifacts";
+    /** 插件目录（可选：放置独立 jar 的插件，由独立 ClassLoader 隔离加载，支持卸载重载） */
+    public static final String PLUGIN_DIR = BASE_DIR + "/plugins";
 }

@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
 /**
@@ -38,8 +39,11 @@ public class Auditor implements ListenerExtensionPoint {
     private AuditLevel auditLevel;
     private BlockingQueue<AuditRecord> queue;
     private ScheduledExecutorService scheduler;
+    /** 独立单线程消费线程：串行处理事件回调，保证审计顺序，并与 EventBus 共享执行器隔离 */
+    private ExecutorService consumer;
     private LocalDataRepository localDataRepository;
     private final List<Subscription> subscriptions = new ArrayList<>();
+    private final AtomicLong droppedCount = new AtomicLong();
     private volatile boolean running = true;
 
     public Auditor() {}
@@ -55,6 +59,7 @@ public class Auditor implements ListenerExtensionPoint {
         }
         this.queue = new LinkedBlockingQueue<>(govConfig.getAuditBufferSize());
         this.localDataRepository = context.getService(LocalDataRepository.class);
+        initConsumer();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "auditor-flusher");
             t.setDaemon(true);
@@ -79,6 +84,7 @@ public class Auditor implements ListenerExtensionPoint {
         this.auditLevel = auditLevel;
         this.queue = new LinkedBlockingQueue<>(bufferSize);
         this.localDataRepository = localDataRepository;
+        initConsumer();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "auditor-flusher");
             t.setDaemon(true);
@@ -89,64 +95,89 @@ public class Auditor implements ListenerExtensionPoint {
                 flushIntervalSeconds, flushIntervalSeconds, TimeUnit.SECONDS);
     }
 
+    private void initConsumer() {
+        this.consumer = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "auditor-consumer");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
     public void registerOnEventBus(EventBus eventBus) {
-        subscriptions.add(eventBus.subscribeAsync(ExecutionStartedEvent.class, event -> {
-            record(AuditEvent.STEP_START, Map.of(
+        subscriptions.add(eventBus.subscribe(ExecutionStartedEvent.class, event -> {
+            asyncRecord(() -> record(AuditEvent.STEP_START, Map.of(
                     "seqId", event.getSeqId(),
                     "sessionId", event.getSessionId(),
                     "prompt", event.getPrompt() != null ? event.getPrompt() : ""
-            ));
+            )));
         }));
-        subscriptions.add(eventBus.subscribeAsync(ExecutionCompletedEvent.class, event -> {
-            record(AuditEvent.EXECUTION_COMPLETE, Map.of(
+        subscriptions.add(eventBus.subscribe(ExecutionCompletedEvent.class, event -> {
+            asyncRecord(() -> record(AuditEvent.EXECUTION_COMPLETE, Map.of(
                     "seqId", event.getSeqId(),
                     "sessionId", event.getSessionId(),
                     "summary", event.getSummary() != null ? event.getSummary() : ""
-            ));
+            )));
         }));
-        subscriptions.add(eventBus.subscribeAsync(ExecutionFailedEvent.class, event -> {
-            record(AuditEvent.ERROR, Map.of(
+        subscriptions.add(eventBus.subscribe(ExecutionFailedEvent.class, event -> {
+            asyncRecord(() -> record(AuditEvent.ERROR, Map.of(
                     "seqId", event.getSeqId(),
                     "sessionId", event.getSessionId(),
                     "errorCode", event.getErrorCode() != null ? event.getErrorCode() : "",
                     "errorMessage", event.getErrorMessage() != null ? event.getErrorMessage() : ""
-            ));
+            )));
         }));
-        subscriptions.add(eventBus.subscribeAsync(StepStartedEvent.class, event -> {
-            record(AuditEvent.STEP_START, Map.of(
+        subscriptions.add(eventBus.subscribe(StepStartedEvent.class, event -> {
+            asyncRecord(() -> record(AuditEvent.STEP_START, Map.of(
                     "seqId", event.getSeqId(),
                     "sessionId", event.getSessionId(),
                     "stepId", event.getStepId(),
                     "totalSteps", event.getTotalSteps(),
                     "expertName", event.getExpertName() != null ? event.getExpertName() : ""
-            ));
+            )));
         }));
-        subscriptions.add(eventBus.subscribeAsync(StepCompletedEvent.class, event -> {
-            record(AuditEvent.STEP_COMPLETE, Map.of(
+        subscriptions.add(eventBus.subscribe(StepCompletedEvent.class, event -> {
+            asyncRecord(() -> record(AuditEvent.STEP_COMPLETE, Map.of(
                     "seqId", event.getSeqId(),
                     "sessionId", event.getSessionId(),
                     "stepId", event.getStepId(),
                     "totalSteps", event.getTotalSteps(),
                     "expertName", event.getExpertName() != null ? event.getExpertName() : ""
-            ));
+            )));
         }));
-        subscriptions.add(eventBus.subscribeAsync(StepFailedEvent.class, event -> {
-            record(AuditEvent.ERROR, Map.of(
+        subscriptions.add(eventBus.subscribe(StepFailedEvent.class, event -> {
+            asyncRecord(() -> record(AuditEvent.ERROR, Map.of(
                     "seqId", event.getSeqId(),
                     "sessionId", event.getSessionId(),
                     "stepId", event.getStepId(),
                     "expertName", event.getExpertName() != null ? event.getExpertName() : "",
                     "error", event.getErrorMessage() != null ? event.getErrorMessage() : ""
-            ));
+            )));
         }));
-        subscriptions.add(eventBus.subscribeAsync(StepRolledBackEvent.class, event -> {
-            record(AuditEvent.BACKUP_RESTORED, Map.of(
+        subscriptions.add(eventBus.subscribe(StepRolledBackEvent.class, event -> {
+            asyncRecord(() -> record(AuditEvent.BACKUP_RESTORED, Map.of(
                     "seqId", event.getSeqId(),
                     "sessionId", event.getSessionId(),
                     "stepId", event.getStepId(),
                     "expertName", event.getExpertName() != null ? event.getExpertName() : ""
-            ));
+            )));
         }));
+    }
+
+    /**
+     * 将审计任务提交到独立单线程消费线程（保证顺序、隔离慢消费者）
+     */
+    private void asyncRecord(Runnable task) {
+        ExecutorService c = consumer;
+        if (c == null) {
+            task.run(); // 兜底：无消费线程时同步执行
+            return;
+        }
+        try {
+            c.submit(task);
+        } catch (RejectedExecutionException e) {
+            // 关闭期间到达的事件直接丢弃
+            droppedCount.incrementAndGet();
+        }
     }
 
     public void unregisterAll() {
@@ -165,7 +196,8 @@ public class Auditor implements ListenerExtensionPoint {
 
         AuditRecord record = new AuditRecord(event, details, Instant.now());
         if (!queue.offer(record)) {
-            LOG.warning("审计队列已满，丢弃事件: " + event);
+            // 不逐条告警（洪峰时会刷屏），改为累计计数，flush 时汇总输出一次
+            droppedCount.incrementAndGet();
         }
     }
 
@@ -180,7 +212,11 @@ public class Auditor implements ListenerExtensionPoint {
      * 强制刷盘（关闭前调用）
      */
     public void flush() {
-        if (queue.isEmpty()) return;
+        long dropped = droppedCount.getAndSet(0);
+        if (dropped > 0) {
+            LOG.warning("审计队列已满，累计丢弃 " + dropped + " 条审计记录");
+        }
+        if (queue == null || queue.isEmpty()) return;
 
         java.util.List<AuditRecord> batch = new java.util.ArrayList<>();
         queue.drainTo(batch);
@@ -212,17 +248,32 @@ public class Auditor implements ListenerExtensionPoint {
     }
 
     /**
-     * 关闭审计器
+     * 关闭审计器（幂等，支持 init 半途失败时的清理）
      */
     public void shutdown() {
         running = false;
-        scheduler.shutdown();
-        try {
-            scheduler.awaitTermination(5, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (consumer != null) {
+            consumer.shutdown();
+            try {
+                consumer.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (scheduler != null) {
+            scheduler.shutdown();
+            try {
+                scheduler.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         flush();
+    }
+
+    /** 队列满累计丢弃的审计记录数 */
+    public long getDroppedCount() {
+        return droppedCount.get();
     }
 
     private boolean isSummaryEvent(AuditEvent event) {

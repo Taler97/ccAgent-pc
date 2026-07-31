@@ -92,6 +92,7 @@ public class AppConfig {
         private int backupRetentionHours = 24;
         private int rollbackRetryCount = 3;
         private int rollbackRetryIntervalSeconds = 1;
+        private String rollbackProvider = "auto";
         private String auditLevel = "summary";
         private int auditBufferSize = 1000;
         private int auditFlushIntervalSeconds = 5;
@@ -103,6 +104,7 @@ public class AppConfig {
         private boolean eventPersistenceEnabled = true;
         private int eventBufferSize = 1000;
         private int eventFlushIntervalSeconds = 5;
+        private int eventRateLimitPerSecond = 0;
 
         public int getMaxTokensPerSession() { return maxTokensPerSession; }
         public void setMaxTokensPerSession(int maxTokensPerSession) { this.maxTokensPerSession = maxTokensPerSession; }
@@ -116,6 +118,8 @@ public class AppConfig {
         public void setRollbackRetryCount(int rollbackRetryCount) { this.rollbackRetryCount = rollbackRetryCount; }
         public int getRollbackRetryIntervalSeconds() { return rollbackRetryIntervalSeconds; }
         public void setRollbackRetryIntervalSeconds(int rollbackRetryIntervalSeconds) { this.rollbackRetryIntervalSeconds = rollbackRetryIntervalSeconds; }
+        public String getRollbackProvider() { return rollbackProvider; }
+        public void setRollbackProvider(String rollbackProvider) { this.rollbackProvider = rollbackProvider; }
         public String getAuditLevel() { return auditLevel; }
         public void setAuditLevel(String auditLevel) { this.auditLevel = auditLevel; }
         public int getAuditBufferSize() { return auditBufferSize; }
@@ -138,6 +142,8 @@ public class AppConfig {
         public void setEventBufferSize(int eventBufferSize) { this.eventBufferSize = eventBufferSize; }
         public int getEventFlushIntervalSeconds() { return eventFlushIntervalSeconds; }
         public void setEventFlushIntervalSeconds(int eventFlushIntervalSeconds) { this.eventFlushIntervalSeconds = eventFlushIntervalSeconds; }
+        public int getEventRateLimitPerSecond() { return eventRateLimitPerSecond; }
+        public void setEventRateLimitPerSecond(int eventRateLimitPerSecond) { this.eventRateLimitPerSecond = eventRateLimitPerSecond; }
     }
 
     public static class PricingConfig {

@@ -9,6 +9,7 @@ import com.ccagent.api.model.response.StreamChunk;
 import com.ccagent.api.port.*;
 import com.ccagent.core.context.ArtifactStore;
 import com.ccagent.core.context.TaskContextImpl;
+import com.ccagent.core.event.PlanExecutionStartedEvent;
 import com.ccagent.core.orchestration.agent.ChatAgent;
 import com.ccagent.core.orchestration.agent.ChatResult;
 import com.ccagent.core.orchestration.context.ExecutionContext;
@@ -17,6 +18,7 @@ import com.ccagent.core.orchestration.repository.ExecutionPlanRepository;
 import com.ccagent.core.orchestration.repository.model.PlanRecord;
 import com.ccagent.core.sync.LocalDataRepository;
 import com.ccagent.exception.base.AgentException;
+import com.ccagent.kernel.event.EventBus;
 import com.ccagent.exception.base.ErrorCode;
 import com.ccagent.exception.tool.ToolException;
 import com.ccagent.exception.workspace.WorkspaceException;
@@ -42,6 +44,7 @@ public class SimpleOrchestrator {
     private final ExecutionPlanRepository executionPlanRepository;
     private final LocalDataRepository localDataRepository;
     private final ArtifactStore artifactStore;
+    private final EventBus eventBus;
 
     private final ConcurrentHashMap<String, ReentrantLock> sessionLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Boolean>> approvalFutures = new ConcurrentHashMap<>();
@@ -51,7 +54,7 @@ public class SimpleOrchestrator {
                                MemoryPort memoryPort,
                                ExpertRegistryPort expertRegistry,
                                ExecutionPlanRepository executionPlanRepository) {
-        this(chatAgent, dispatcher, memoryPort, expertRegistry, executionPlanRepository, null, null);
+        this(chatAgent, dispatcher, memoryPort, expertRegistry, executionPlanRepository, null, null, null);
     }
 
     public SimpleOrchestrator(ChatAgent chatAgent, Dispatcher dispatcher,
@@ -59,7 +62,7 @@ public class SimpleOrchestrator {
                                ExpertRegistryPort expertRegistry,
                                ExecutionPlanRepository executionPlanRepository,
                                LocalDataRepository localDataRepository) {
-        this(chatAgent, dispatcher, memoryPort, expertRegistry, executionPlanRepository, localDataRepository, null);
+        this(chatAgent, dispatcher, memoryPort, expertRegistry, executionPlanRepository, localDataRepository, null, null);
     }
 
     public SimpleOrchestrator(ChatAgent chatAgent, Dispatcher dispatcher,
@@ -68,6 +71,16 @@ public class SimpleOrchestrator {
                                ExecutionPlanRepository executionPlanRepository,
                                LocalDataRepository localDataRepository,
                                ArtifactStore artifactStore) {
+        this(chatAgent, dispatcher, memoryPort, expertRegistry, executionPlanRepository, localDataRepository, artifactStore, null);
+    }
+
+    public SimpleOrchestrator(ChatAgent chatAgent, Dispatcher dispatcher,
+                               MemoryPort memoryPort,
+                               ExpertRegistryPort expertRegistry,
+                               ExecutionPlanRepository executionPlanRepository,
+                               LocalDataRepository localDataRepository,
+                               ArtifactStore artifactStore,
+                               EventBus eventBus) {
         this.chatAgent = chatAgent;
         this.dispatcher = dispatcher;
         this.memoryPort = memoryPort;
@@ -75,6 +88,7 @@ public class SimpleOrchestrator {
         this.executionPlanRepository = executionPlanRepository;
         this.localDataRepository = localDataRepository;
         this.artifactStore = artifactStore;
+        this.eventBus = eventBus;
     }
 
     public void createSession(String sessionId, String workspaceRoot) {
@@ -228,6 +242,10 @@ public class SimpleOrchestrator {
         TaskContextImpl task = new TaskContextImpl(
                 recoveryKey, plan, artifactStore, ctx.getWorkspaceRoot());
         try {
+            // 执行前一次性发布：治理层（回滚备份等）在此完成整批准备工作，避免每个步骤事件重复 IO
+            if (eventBus != null) {
+                eventBus.publish(new PlanExecutionStartedEvent(seqId, ctx.getSessionId(), plan, ctx.getWorkspaceRoot()));
+            }
             dispatcher.execute(plan, seqId, ctx.getSessionId(), planVersion,
                     ctx.getWorkspaceRoot(), cancelled, observer, task, Set.of());
         } finally {
@@ -315,6 +333,10 @@ public class SimpleOrchestrator {
             };
 
             try {
+                // 恢复执行同样先触发整批备份，保证未完成步骤的回滚能力
+                if (eventBus != null) {
+                    eventBus.publish(new PlanExecutionStartedEvent(recoveryKey, sessionId, plan, workspaceRoot));
+                }
                 dispatcher.execute(plan, recoveryKey, sessionId, planVersion,
                         workspaceRoot, cancelled, noopObserver, task, skipIds);
             } finally {

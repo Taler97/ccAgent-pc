@@ -75,5 +75,8 @@
 
 ## 依赖关系
 
-- **加载方式**: 运行时通过 `kernel` 的 `SimplePluginManager` 热加载
+- **加载方式**: 运行时通过 `kernel` 的 `SimplePluginManager` 加载（classpath 扫描 + 插件目录 jar 隔离加载）
+- **隔离加载**: 插件目录（`.codepal/plugins`）中的 jar 由独立 `PluginClassLoader`（child-first）加载，类冲突隔离、可卸载（close 后 GC 回收）
+- **失败隔离**: 依赖缺失（NoClassDefFoundError）/ 静态初始化失败 / init 异常均被捕获记录，单插件失败不影响内核与其他插件；init 失败自动调用 `shutdown()` 回滚半初始化资源
+- **热插拔**: `PluginHotReloader` 监听插件目录 jar 变化（WatchService + 500ms 防抖），自动重载 LISTENER 治理插件并替换运行时引用（`GovernanceModule.reloadListeners` → `GovernanceGateway.replaceListeners`）
 - **物理隔离**: 各插件子模块独立打包，通过 SPI 方式被 PluginManager 发现

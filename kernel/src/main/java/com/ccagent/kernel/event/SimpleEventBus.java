@@ -15,12 +15,18 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class SimpleEventBus implements EventBus {
 
     private static final Logger LOG = Logger.getLogger(SimpleEventBus.class.getName());
+
+    /** 持久化入队最大等待时间：轻微背压，避免立即丢弃 */
+    private static final long ENQUEUE_TIMEOUT_MS = 100L;
+    /** 丢弃告警的最小间隔，防止洪峰时刷屏 */
+    private static final long DROP_WARNING_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(10);
 
     private final Map<Class<?>, List<HandlerHolder<?>>> handlers = new ConcurrentHashMap<>();
     private final ExecutorService asyncExecutor;
@@ -29,14 +35,35 @@ public class SimpleEventBus implements EventBus {
     private final ScheduledExecutorService persistenceScheduler;
     private final AtomicBoolean running = new AtomicBoolean(true);
 
+    /** 持久化队列丢弃（队列满/入队超时）的事件数 */
+    private final AtomicLong droppedEventCount = new AtomicLong();
+    /** 限流丢弃的事件数 */
+    private final AtomicLong rateLimitedCount = new AtomicLong();
+    private final AtomicLong lastDropWarningNanos = new AtomicLong();
+
+    // 可选限流（令牌桶）：rateLimitPerSecond <= 0 表示不限流
+    private final double rateLimitPerSecond;
+    private final double rateCapacity;
+    private double availableTokens;
+    private long lastRefillNanos;
+
     public SimpleEventBus() {
-        this(true, 1000, 5);
+        this(true, 1000, 5, 0);
     }
 
     public SimpleEventBus(boolean persistenceEnabled, int bufferSize, int flushIntervalSeconds) {
+        this(persistenceEnabled, bufferSize, flushIntervalSeconds, 0);
+    }
+
+    public SimpleEventBus(boolean persistenceEnabled, int bufferSize, int flushIntervalSeconds,
+                          int rateLimitPerSecond) {
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
         this.persistenceEnabled = persistenceEnabled;
         this.persistenceQueue = new LinkedBlockingQueue<>(bufferSize);
+        this.rateLimitPerSecond = Math.max(0, rateLimitPerSecond);
+        this.rateCapacity = Math.max(1, this.rateLimitPerSecond);
+        this.availableTokens = this.rateCapacity;
+        this.lastRefillNanos = System.nanoTime();
 
         if (persistenceEnabled) {
             this.persistenceScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -59,8 +86,16 @@ public class SimpleEventBus implements EventBus {
     public void publish(Event event) {
         if (!running.get()) return;
 
-        if (persistenceEnabled) {
-            persistenceQueue.offer(event);
+        // 可选限流：超限事件直接丢弃（默认关闭）
+        if (rateLimitPerSecond > 0 && !tryAcquire()) {
+            rateLimitedCount.incrementAndGet();
+            logDropWarning("事件发布超限流阈值");
+            return;
+        }
+
+        if (persistenceEnabled && !tryEnqueuePersistence(event)) {
+            // 持久化入队失败（队列满/超时）：丢弃并告警；仍继续分发给订阅者，
+            // 各订阅者有自己的队列与丢弃策略，互不影响
         }
 
         Class<?> eventClass = event.getClass();
@@ -73,6 +108,64 @@ public class SimpleEventBus implements EventBus {
             }
             eventClass = eventClass.getSuperclass();
         }
+    }
+
+    private boolean tryEnqueuePersistence(Event event) {
+        try {
+            if (persistenceQueue.offer(event, ENQUEUE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                return true;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        droppedEventCount.incrementAndGet();
+        logDropWarning("事件持久化队列已满");
+        return false;
+    }
+
+    /**
+     * 限流令牌桶：按固定速率补充令牌，容量 = 每秒速率
+     */
+    private synchronized boolean tryAcquire() {
+        long now = System.nanoTime();
+        double elapsedSeconds = (now - lastRefillNanos) / 1_000_000_000.0;
+        lastRefillNanos = now;
+        availableTokens = Math.min(rateCapacity, availableTokens + elapsedSeconds * rateLimitPerSecond);
+        if (availableTokens >= 1.0) {
+            availableTokens -= 1.0;
+            return true;
+        }
+        return false;
+    }
+
+    private void logDropWarning(String reason) {
+        long now = System.nanoTime();
+        long last = lastDropWarningNanos.get();
+        if (now - last > DROP_WARNING_INTERVAL_NANOS
+                && lastDropWarningNanos.compareAndSet(last, now)) {
+            LOG.warning(reason + "，丢弃事件（累计持久化丢弃 " + droppedEventCount.get()
+                    + " 条，限流丢弃 " + rateLimitedCount.get() + " 条）");
+        }
+    }
+
+    /** 持久化队列累计丢弃事件数 */
+    public long getDroppedEventCount() {
+        return droppedEventCount.get();
+    }
+
+    /** 限流累计丢弃事件数 */
+    public long getRateLimitedCount() {
+        return rateLimitedCount.get();
+    }
+
+    /** 持久化队列当前积压量 */
+    public int getPersistenceQueueSize() {
+        return persistenceQueue.size();
+    }
+
+    /** 持久化队列容量 */
+    public int getPersistenceBufferSize() {
+        return persistenceQueue.size() + persistenceQueue.remainingCapacity();
     }
 
     @SuppressWarnings("unchecked")

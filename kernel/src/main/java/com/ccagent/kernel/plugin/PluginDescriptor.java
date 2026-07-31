@@ -30,6 +30,12 @@ public class PluginDescriptor {
 
     private List<String> dependencies;
 
+    /** 是否从插件目录隔离加载（独立 ClassLoader，支持卸载重载） */
+    private boolean isolated;
+
+    /** 插件 jar 的 URL（isolated 时有效，作为隔离类加载器的来源） */
+    private String sourceUrl;
+
     public PluginDescriptor() {}
 
     public String getName() { return name; }
@@ -49,6 +55,12 @@ public class PluginDescriptor {
 
     public List<String> getDependencies() { return dependencies; }
     public void setDependencies(List<String> dependencies) { this.dependencies = dependencies; }
+
+    public boolean isIsolated() { return isolated; }
+    public void setIsolated(boolean isolated) { this.isolated = isolated; }
+
+    public String getSourceUrl() { return sourceUrl; }
+    public void setSourceUrl(String sourceUrl) { this.sourceUrl = sourceUrl; }
 
     @Override
     public String toString() {

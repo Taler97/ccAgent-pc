@@ -6,7 +6,6 @@ import com.ccagent.api.model.response.StreamChunk;
 import com.ccagent.api.port.LlmPort;
 import com.ccagent.api.port.StreamObserver;
 import com.ccagent.core.event.LlmCallCompletedEvent;
-import com.ccagent.plugin.governance.audit.TokenStatsService;
 import com.ccagent.core.governance.context.ExecutionContextHolder;
 import com.ccagent.core.governance.policy.TokenQuotaService;
 import com.ccagent.core.orchestration.context.ExecutionContext;
@@ -32,23 +31,19 @@ public class TokenTrackingLlmProxy implements LlmPort {
 
     private final LlmPort realLlmPort;
     private final TokenQuotaService quotaService;
-    private final TokenStatsService statsService;
     private final LocalDataRepository localDataRepository;
     private final EventBus eventBus;
 
     public TokenTrackingLlmProxy(LlmPort realLlmPort, TokenQuotaService quotaService,
-                                  TokenStatsService statsService,
                                   EventBus eventBus) {
-        this(realLlmPort, quotaService, statsService, null, eventBus);
+        this(realLlmPort, quotaService, null, eventBus);
     }
 
     public TokenTrackingLlmProxy(LlmPort realLlmPort, TokenQuotaService quotaService,
-                                  TokenStatsService statsService,
                                   LocalDataRepository localDataRepository,
                                   EventBus eventBus) {
         this.realLlmPort = realLlmPort;
         this.quotaService = quotaService;
-        this.statsService = statsService;
         this.localDataRepository = localDataRepository;
         this.eventBus = eventBus;
     }
@@ -66,15 +61,14 @@ public class TokenTrackingLlmProxy implements LlmPort {
         ChatResponse response = realLlmPort.chat(request);
         long durationMs = System.currentTimeMillis() - startTime;
 
-        // 后处理：更新配额 + 统计
+        // 后处理：更新配额
         int totalTokens = response.getTotalTokens();
         int cachedTokens = response.getCachedTokens();
         int outputTokens = totalTokens - cachedTokens;
         quotaService.recordUsage(sessionId, totalTokens);
-        statsService.recordLlmCall(sessionId, String.valueOf(request.hashCode()),
-                totalTokens, cachedTokens);
 
         String seqId = extractSeqId();
+        // 统计统一走事件总线（TokenStatsService 监听 LlmCallCompletedEvent），保证单实例单次计数
         eventBus.publish(new LlmCallCompletedEvent(
                 sessionId, seqId, "",
                 totalTokens - cachedTokens, cachedTokens, outputTokens,
@@ -124,8 +118,6 @@ public class TokenTrackingLlmProxy implements LlmPort {
                     long durationMs = System.currentTimeMillis() - startTime;
                     int outputTokens = totalTokens - cachedTokens;
                     quotaService.recordUsage(sessionId, totalTokens);
-                    statsService.recordLlmCall(sessionId, String.valueOf(request.hashCode()),
-                            totalTokens, cachedTokens);
                     eventBus.publish(new LlmCallCompletedEvent(
                             sessionId, seqId, "",
                             totalTokens - cachedTokens, cachedTokens, outputTokens,

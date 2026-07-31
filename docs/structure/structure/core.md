@@ -73,6 +73,7 @@
 | `ExecutionStartedEvent.java` | 执行开始 |
 | `ExecutionCompletedEvent.java` | 执行完成 |
 | `ExecutionFailedEvent.java` | 执行失败 |
+| `PlanExecutionStartedEvent.java` | Plan 确认后、Dispatcher 执行前（携带 workspaceRoot，触发治理层整批备份，避免每步重复 IO） |
 | `StepStartedEvent.java` | 步骤开始 |
 | `StepCompletedEvent.java` | 步骤完成 |
 | `StepFailedEvent.java` | 步骤失败 |

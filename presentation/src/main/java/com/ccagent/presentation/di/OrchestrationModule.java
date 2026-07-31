@@ -15,6 +15,7 @@ import com.ccagent.plugin.governance.rollback.RollbackManager;
 import com.ccagent.core.orchestration.agent.ChatAgent;
 import com.ccagent.core.orchestration.dispatcher.Dispatcher;
 import com.ccagent.core.orchestration.orchestrator.SimpleOrchestrator;
+import com.ccagent.core.orchestration.progress.ProgressStore;
 import com.ccagent.core.orchestration.repository.ExecutionPlanRepository;
 import com.ccagent.core.sync.LocalDataRepository;
 import com.ccagent.kernel.event.EventBus;
@@ -42,20 +43,28 @@ public class OrchestrationModule {
 
         ExecutionPlanRepository planRepo = new ExecutionPlanRepository(dataSource);
 
+        ProgressStore progressStore = new ProgressStore();
         ChatAgent chatAgent = new ChatAgent(proxyLlm, memoryPort);
         ArtifactStore artifactStore = new FileArtifactStore();
-        Dispatcher dispatcher = new Dispatcher(expertRegistry, planRepo, artifactStore, eventBus);
+        Dispatcher dispatcher = new Dispatcher(expertRegistry, planRepo, artifactStore, eventBus, progressStore);
         SimpleOrchestrator orchestrator = new SimpleOrchestrator(
                 chatAgent, dispatcher, memoryPort, expertRegistry,
-                planRepo, localDataRepo, artifactStore);
+                planRepo, localDataRepo, artifactStore, eventBus);
 
         governanceGateway = new GovernanceGateway(
                 orchestrator, policyEnforcer, tokenQuotaService,
                 planSanitizer, rollbackManager,
-                auditor, tokenStatsService, eventBus);
+                auditor, tokenStatsService, eventBus, progressStore);
     }
 
     public OrchestratorPort getGovernanceGateway() {
+        return governanceGateway;
+    }
+
+    /**
+     * 返回具体类型的治理网关（供热插拔装配链调用 replaceListeners）
+     */
+    public GovernanceGateway getGovernanceGatewayImpl() {
         return governanceGateway;
     }
 

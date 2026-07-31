@@ -55,8 +55,14 @@
 
 系统的两大核心基础设施：
 
-- **EventBus（SimpleEventBus）**：支持同步/异步发布，事件日志持久化到 `event.log`。所有组件间通信通过事件进行，实现松耦合。
+- **EventBus（SimpleEventBus）**：支持同步/异步发布，事件日志持久化到 `event.log`。内置有界持久化队列 + 丢弃计数与限频告警（队列满时轻微背压 100ms 而非静默丢弃）、可选令牌桶限流（`eventRateLimitPerSecond`，默认关闭）、队列水位与丢弃指标暴露。所有组件间通信通过事件进行，实现松耦合。
 - **PluginManager（SimplePluginManager）**：通过 `ClassLoader.getResources()` 扫描 `META-INF/plugins/*.yaml` 描述符，反射加载插件实例，通过 PluginContext 注入核心服务。生成健康检查报告。
+
+**插件隔离与热插拔**：
+
+- **隔离加载**：插件目录（`./.codepal/plugins`）中的 jar 由独立 `PluginClassLoader`（child-first）加载——插件类与内核/其他插件类隔离，类冲突互不影响，`close()` 后类可被 GC 回收。
+- **坏插件不击穿内核**：任何插件异常（含 `NoClassDefFoundError` 依赖缺失、`ExceptionInInitializerError` 静态初始化失败）都被捕获并记录到 `PluginLoadReport`，单插件失败不影响其他插件与内核；`init` 失败时自动调用 `shutdown()` 回滚半初始化资源。
+- **热插拔**：`PluginHotReloader` 通过 WatchService 监听插件目录 jar 变化（500ms 防抖），自动触发重载——取消旧订阅 → 关闭隔离类加载器 → 重新加载 → 更新引用与注册表，治理监听器（LISTENER）实现运行时热替换。
 
 ### 事件驱动架构
 
@@ -65,9 +71,10 @@
 | 事件 | 发布者 | 监听者 | 作用 |
 |------|--------|--------|------|
 | `ExecutionStartedEvent` | GovernanceGateway | Auditor, TokenStatsService | 记录执行开始 |
+| `PlanExecutionStartedEvent` | SimpleOrchestrator | RollbackManager | Plan 执行前触发整批备份（git 检查点/快照） |
 | `StepStartedEvent` | Dispatcher | Auditor, RollbackManager | 记录步骤开始 |
 | `StepCompletedEvent` | Dispatcher | Auditor | 记录步骤完成 |
-| `StepFailedEvent` | Dispatcher | Auditor, RollbackManager | 触发回滚或审计 |
+| `StepFailedEvent` | Dispatcher | Auditor, RollbackManager | 触发会话级整批回滚或审计 |
 | `StepRolledBackEvent` | Dispatcher | Auditor | 记录回滚结果 |
 | `LlmCallCompletedEvent` | TokenTrackingLlmProxy | TokenStatsService | 统计 Token 用量 |
 
@@ -148,9 +155,14 @@ Dispatcher 按 DAG 依赖图调度步骤执行，支持文件级和 Key 级别�
 
 ### 回滚机制
 
-支持按步骤级别回滚，RollbackManager 监听 `StepFailedEvent` 触发回滚。
+支持**会话级整批回滚**，RollbackManager 监听 `StepFailedEvent` 触发还原（与 Trae/Claude Code 对齐，规避并行步骤的文件交叉污染）。
 
-- 回滚步骤按照与执行相反的顺序执行
+- **双模备份策略**（`rollbackProvider`，默认 auto）：
+  - `git`：工作区是 git 仓库时，执行前用 `git hash-object -w` 将受影响文件写入 git 对象库（blob 检查点），回滚时 `git cat-file blob` 原样还原。零 index/分支历史污染，无引用对象由 git gc 回收。
+  - `snapshot`：文件快照到 `.codepal/staging/`（非 git 仓库环境的回退）。
+  - `auto`：检测工作区是否为 git 仓库，是则 git，否则 snapshot。
+- 任一步骤失败 → 整批还原所有受影响文件（成功步骤的修改一并还原，幂等）
+- 备份时机：Plan 执行前一次完成（`PlanExecutionStartedEvent`），步骤事件零 IO，不占执行线程池
 - 每个 `StepRolledBackEvent` 记录回滚结果
 - 回滚策略通过事件驱动，不侵入编排核心逻辑
 
@@ -169,9 +181,11 @@ Dispatcher 按 DAG 依赖图调度步骤执行，支持文件级和 Key 级别�
 
 - **TOOL 插件**（6 个）：文件读写、搜索、目录操作等工具
 - **EXPERT 插件**（7 个）：Planner、Writer、Researcher 等 AI 专家角色
-- **LISTENER 插件**（3 个）：Auditor、RollbackManager、TokenStatsService
+- **LISTENER 插件**（3 个）：Auditor、RollbackManager、TokenStatsService（治理监听器单实例，统一由插件通道产出）
 
 启动时生成**健康检查报告**，汇总扫描数、成功/失败数和分类列表。
+
+**隔离与热插拔**：插件目录（`./.codepal/plugins`）中的 jar 由独立 `PluginClassLoader` 隔离加载（类冲突隔离、可卸载）；坏插件（依赖缺失/init 异常）被隔离记录不击穿内核，init 失败自动调用 `shutdown()` 回滚半初始化资源；`PluginHotReloader` 监听插件目录 jar 变化（WatchService + 防抖），自动热重载 LISTENER 治理插件并替换运行时引用。
 
 ### 虚拟线程并发 + CPU 密集分流
 

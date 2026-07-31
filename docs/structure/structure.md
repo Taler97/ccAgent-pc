@@ -70,8 +70,9 @@ presentation → adapter → core → api → kernel → infrastructure / except
 | 特征 | 说明 |
 |------|------|
 | **六边形架构** | kernel + api 定义核心逻辑和端口，adapter 实现外部系统适配 |
-| **微内核 + 插件化** | PluginManager + EventBus 作为内核，3 类插件通过 YAML 声明式注册 |
-| **事件驱动** | 治理组件（Auditor、RollbackManager 等）通过事件监听解耦 |
+| **微内核 + 插件化** | PluginManager + EventBus 作为内核，3 类插件通过 YAML 声明式注册；插件目录 jar 独立 ClassLoader 隔离加载，坏插件不击穿内核 |
+| **事件驱动** | 治理组件（Auditor、RollbackManager 等）通过事件监听解耦；EventBus 有界队列 + 背压 + 丢弃可观测 + 可选限流 |
+| **热插拔** | PluginHotReloader 监听插件目录变化，自动重载 LISTENER 治理插件并替换运行时引用 |
 | **手工 DI** | 各模块下有 `di/` 子包，通过 DependencyGraph 统一组装 |
 | **异常体系分层** | 按领域划分异常子包，继承自 `AgentException` 基类 |
 | **同步机制** | core/sync 提供本地与云端的双向数据同步能力 |

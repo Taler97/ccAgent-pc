@@ -19,6 +19,7 @@ import com.ccagent.core.governance.policy.TokenQuotaService;
 import com.ccagent.plugin.governance.rollback.RollbackManager;
 import com.ccagent.core.orchestration.context.ExecutionContext;
 import com.ccagent.core.orchestration.orchestrator.SimpleOrchestrator;
+import com.ccagent.core.orchestration.progress.ProgressStore;
 import com.ccagent.exception.base.AgentException;
 import com.ccagent.kernel.event.EventBus;
 
@@ -31,10 +32,12 @@ public class GovernanceGateway implements OrchestratorPort {
     private final PolicyEnforcer policyEnforcer;
     private final TokenQuotaService tokenQuotaService;
     private final PlanSanitizer planSanitizer;
-    private final RollbackManager rollbackManager;
-    private final Auditor auditor;
-    private final TokenStatsService tokenStatsService;
+    /** 治理监听器实例，热插拔时由装配链通过 {@link #replaceListeners} 原子替换 */
+    private volatile RollbackManager rollbackManager;
+    private volatile Auditor auditor;
+    private volatile TokenStatsService tokenStatsService;
     private final EventBus eventBus;
+    private final ProgressStore progressStore;
 
     public GovernanceGateway(SimpleOrchestrator orchestrator,
                               PolicyEnforcer policyEnforcer,
@@ -43,7 +46,8 @@ public class GovernanceGateway implements OrchestratorPort {
                               RollbackManager rollbackManager,
                               Auditor auditor,
                               TokenStatsService tokenStatsService,
-                              EventBus eventBus) {
+                              EventBus eventBus,
+                              ProgressStore progressStore) {
         this.orchestrator = orchestrator;
         this.policyEnforcer = policyEnforcer;
         this.tokenQuotaService = tokenQuotaService;
@@ -52,6 +56,17 @@ public class GovernanceGateway implements OrchestratorPort {
         this.auditor = auditor;
         this.tokenStatsService = tokenStatsService;
         this.eventBus = eventBus;
+        this.progressStore = progressStore;
+    }
+
+    /**
+     * 热插拔：替换治理监听器实例（volatile 原子替换，后续调用自动使用新实例）
+     */
+    public void replaceListeners(RollbackManager rollbackManager, Auditor auditor,
+                                 TokenStatsService tokenStatsService) {
+        if (rollbackManager != null) this.rollbackManager = rollbackManager;
+        if (auditor != null) this.auditor = auditor;
+        if (tokenStatsService != null) this.tokenStatsService = tokenStatsService;
     }
 
     @Override
@@ -151,5 +166,15 @@ public class GovernanceGateway implements OrchestratorPort {
     @Override
     public List<SessionInfo> listSessions() {
         return orchestrator.listSessions();
+    }
+
+    @Override
+    public String getExecutionProgress(String seqId) {
+        return progressStore.snapshot(seqId);
+    }
+
+    @Override
+    public String getStepExecutionStatus(String seqId, int stepId) {
+        return progressStore.snapshotStep(seqId, stepId);
     }
 }
