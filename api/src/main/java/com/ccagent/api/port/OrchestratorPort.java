@@ -93,4 +93,24 @@ public interface OrchestratorPort {
      * 获取所有会话列表（按最后更新时间降序）
      */
     List<SessionInfo> listSessions();
+
+    /**
+     * 获取指定执行的进度快照（JSON）
+     * <p>返回各步骤状态（PENDING/RUNNING/SUCCESS/FAILED/CANCELLED）与活动描述。
+     * 数据为内存态，任务结束后销毁。</p>
+     *
+     * @param seqId 消息序列号
+     * @return 进度快照 JSON；执行不存在时返回 null
+     */
+    String getExecutionProgress(String seqId);
+
+    /**
+     * 查询指定执行中某个步骤的执行状态（JSON）
+     * <p>返回单步骤的状态、最新活动描述与运行时长。活动数据不推送，按需主动查询。</p>
+     *
+     * @param seqId  消息序列号
+     * @param stepId 步骤 ID
+     * @return 单步骤状态 JSON；seqId 或 stepId 不存在时返回 null
+     */
+    String getStepExecutionStatus(String seqId, int stepId);
 }

@@ -296,6 +296,7 @@ public class StandaloneAgentRunner {
             case "/session" -> handleSession(parts);
             case "/switch" -> handleSwitch(parts);
             case "/status" -> handleStatus();
+            case "/progress" -> handleProgress(parts);
             case "/confirm" -> handleConfirm();
             case "/reject" -> handleReject();
             case "/cancel" -> handleCancel();
@@ -312,6 +313,102 @@ public class StandaloneAgentRunner {
     }
 
     // ==================== 执行控制 ====================
+
+    /**
+     * 查询执行进度：/progress 列出全部步骤，/progress <stepId> 查询单步骤详细状态
+     */
+    @SuppressWarnings("unchecked")
+    private void handleProgress(String[] parts) {
+        if (pendingSeqId == null || pendingSeqId.isBlank()) {
+            System.out.println("当前没有正在执行的任务");
+            return;
+        }
+        try {
+            if (parts.length > 1) {
+                int stepId = Integer.parseInt(parts[1].trim());
+                String json = orchestrator.getStepExecutionStatus(pendingSeqId, stepId);
+                if (json == null) {
+                    System.out.println("步骤 " + stepId + " 不存在或执行已结束");
+                    return;
+                }
+                printStepDetail(JsonUtil.fromJson(json, Map.class));
+                return;
+            }
+            String json = orchestrator.getExecutionProgress(pendingSeqId);
+            if (json == null) {
+                System.out.println("当前没有正在执行的任务或执行已结束");
+                return;
+            }
+            printProgressTable(JsonUtil.fromJson(json, Map.class));
+        } catch (NumberFormatException e) {
+            System.out.println("用法: /progress [stepId]");
+        } catch (Exception e) {
+            System.out.println("查询进度失败: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void printStepDetail(Map<String, Object> s) {
+        int stepId = ((Number) s.getOrDefault("stepId", 0)).intValue();
+        int total = ((Number) s.getOrDefault("totalSteps", 0)).intValue();
+        String status = str(s.get("status"));
+        String activity = str(s.get("activity"));
+
+        System.out.println("╔══════════════════════════════════════════╗");
+        System.out.println("║  步骤 " + stepId + "/" + total + "   " + status);
+        System.out.println("╠══════════════════════════════════════════╣");
+        System.out.println("║  专家:   " + str(s.get("expertName")));
+        System.out.println("║  任务:   " + truncate(str(s.get("task")), 30));
+        System.out.println("║  已运行: " + formatElapsed(toLong(s.get("elapsedMs"))));
+        if (!activity.isBlank()) {
+            System.out.println("║  活动:   " + truncate(activity, 30));
+        }
+        System.out.println("╚══════════════════════════════════════════╝");
+    }
+
+    @SuppressWarnings("unchecked")
+    private void printProgressTable(Map<String, Object> data) {
+        int total = ((Number) data.getOrDefault("totalSteps", 0)).intValue();
+        int completed = ((Number) data.getOrDefault("completedSteps", 0)).intValue();
+        int overall = ((Number) data.getOrDefault("overallProgress", 0)).intValue();
+
+        System.out.println("╔══════════════════════════════════════════════════════════╗");
+        System.out.println("║  执行进度  " + completed + "/" + total + " 完成  (" + overall + "%)");
+        System.out.println("╠══════════════════════════════════════════════════════════╣");
+
+        List<Map<String, Object>> steps = (List<Map<String, Object>>) data.get("steps");
+        if (steps != null) {
+            for (Map<String, Object> s : steps) {
+                int stepId = ((Number) s.getOrDefault("stepId", 0)).intValue();
+                String expert = str(s.get("expertName"));
+                String status = str(s.get("status"));
+                String activity = str(s.get("activity"));
+                String icon = switch (status) {
+                    case "RUNNING" -> "🔄";
+                    case "SUCCESS" -> "✅";
+                    case "FAILED" -> "❌";
+                    case "CANCELLED" -> "⏭️";
+                    default -> "⬜";
+                };
+                String line = "║  " + icon + " " + padRight("步骤" + stepId, 7)
+                        + padRight(expert, 10) + padRight(status, 10);
+                if ("RUNNING".equals(status)) {
+                    line += truncate(activity, 18) + " "
+                            + padLeft(formatElapsed(toLong(s.get("elapsedMs"))), 8);
+                }
+                System.out.println(padRight(line, 55) + "║");
+            }
+        }
+        System.out.println("╚══════════════════════════════════════════════════════════╝");
+        System.out.println("用法: /progress <stepId>  查询单步骤详细状态");
+    }
+
+    private static String formatElapsed(long ms) {
+        if (ms <= 0) return "0s";
+        long sec = ms / 1000;
+        if (sec < 60) return sec + "s";
+        return (sec / 60) + "m" + (sec % 60) + "s";
+    }
 
     private void handleConfirm() {
         if (!planPending || pendingSeqId == null) {
@@ -949,6 +1046,7 @@ public class StandaloneAgentRunner {
         System.out.println("║  /reject       拒绝当前 Plan             ║");
         System.out.println("║  /cancel       取消正在执行的任务        ║");
         System.out.println("║  /rollback     回滚上次操作              ║");
+        System.out.println("║  /progress     查看执行进度（/progress <stepId> 查单步骤）║");
         System.out.println("║                                           ║");
         System.out.println("║  会话管理                                 ║");
         System.out.println("║  /session      查看/创建会话             ║");

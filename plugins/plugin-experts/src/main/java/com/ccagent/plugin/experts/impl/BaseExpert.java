@@ -13,6 +13,7 @@ import com.ccagent.api.port.LlmPort;
 import com.ccagent.api.port.StreamObserver;
 import com.ccagent.api.port.ToolRegistryPort;
 import com.ccagent.core.plugin.ExpertExtensionPoint;
+import com.ccagent.infrastructure.util.JsonUtil;
 import com.ccagent.kernel.plugin.PluginContext;
 
 import java.util.*;
@@ -71,7 +72,7 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
                               StreamObserver<StreamChunk> observer) {
         ChatRequest request = new ChatRequest(
                 systemPrompt, userPrompt, List.of(),
-                false, 4096, 0.3, 60
+                false, 8192, 0.3, 60
         );
         StringBuilder fullContent = new StringBuilder();
         CountDownLatch latch = new CountDownLatch(1);
@@ -224,8 +225,8 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
                                    String workspaceRoot,
                                    StreamObserver<StreamChunk> observer) {
         List<ToolDefinition> tools = getAvailableTools();
-        List<Map<String, String>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "user", "content", userPrompt));
+        List<Map<String, Object>> messages = new ArrayList<>();
+        messages.add(Map.<String, Object>of("role", "user", "content", userPrompt));
 
         StringBuilder finalContent = new StringBuilder();
         int loopCount = 0;
@@ -239,7 +240,7 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
                     "",
                     tools,
                     true,
-                    4096,
+                    8192,
                     0.3,
                     60,
                     messages
@@ -258,12 +259,35 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
                 break;
             }
 
+            // assistant 消息需携带 tool_calls（DeepSeek v4 要求 tool 消息引用前一条 assistant 的 tool_calls）
+            Map<String, Object> assistantMsg = new LinkedHashMap<>();
+            assistantMsg.put("role", "assistant");
+            assistantMsg.put("content", content != null ? content : "");
+            List<Map<String, Object>> rawCalls = new ArrayList<>();
             for (ToolCall tc : toolCalls) {
-                if (content != null) {
-                    messages.add(Map.of("role", "assistant", "content", content));
+                Map<String, Object> call = new LinkedHashMap<>();
+                if (tc.getId() != null) call.put("id", tc.getId());
+                call.put("type", "function");
+                Map<String, Object> func = new LinkedHashMap<>();
+                func.put("name", tc.getName());
+                func.put("arguments", JsonUtil.toJson(tc.getArguments()));
+                call.put("function", func);
+                rawCalls.add(call);
+            }
+            assistantMsg.put("tool_calls", rawCalls);
+            messages.add(assistantMsg);
+
+            for (ToolCall tc : toolCalls) {
+                String toolResult = executeToolSafe(tc.getName(), tc.getArguments(), workspaceRoot, observer);
+                Map<String, Object> toolMsg = new LinkedHashMap<>();
+                toolMsg.put("role", "tool");
+                toolMsg.put("name", tc.getName());
+                // DeepSeek v4 要求 tool 消息携带 tool_call_id（OpenAI tool-calling 格式）
+                if (tc.getId() != null && !tc.getId().isBlank()) {
+                    toolMsg.put("tool_call_id", tc.getId());
                 }
-                String toolResult = executeToolSafe(tc.getName(), tc.getArguments(), workspaceRoot);
-                messages.add(Map.of("role", "tool", "name", tc.getName(), "content", toolResult));
+                toolMsg.put("content", toolResult);
+                messages.add(toolMsg);
             }
         }
 
@@ -278,8 +302,16 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
 
     /**
      * 安全执行工具（捕获异常返回错误信息，不抛出）
+     * <p>执行前推送 ACTIVITY 活动事件（如"正在编辑文件 xxx"），供进度查询展示。</p>
      */
-    private String executeToolSafe(String toolName, Map<String, Object> args, String workspaceRoot) {
+    private String executeToolSafe(String toolName, Map<String, Object> args, String workspaceRoot,
+                                   StreamObserver<StreamChunk> observer) {
+        if (observer != null) {
+            String activity = buildActivity(toolName, args);
+            if (activity != null) {
+                observer.onNext(new StreamChunk(null, "ACTIVITY", activity, null));
+            }
+        }
         try {
             ExecutionResult result = toolRegistry.executeTool(toolName, args, workspaceRoot);
             return result.isSuccess()
@@ -287,6 +319,28 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
                     : "失败: " + result.getMessage();
         } catch (Exception e) {
             return "工具执行失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 根据工具名与参数生成活动描述文案
+     */
+    private String buildActivity(String toolName, Map<String, Object> args) {
+        String path = args != null && args.get("path") != null
+                ? String.valueOf(args.get("path")) : "";
+        switch (toolName) {
+            case "write_file":
+            case "edit_file":
+            case "file_operation":
+                return path.isEmpty() ? "正在编辑文件" : "正在编辑文件: " + path;
+            case "read_file":
+                return path.isEmpty() ? "正在读取文件" : "正在读取文件: " + path;
+            case "list_directory":
+                return path.isEmpty() ? "正在浏览目录" : "正在浏览目录: " + path;
+            case "search_content":
+                return "正在搜索内容";
+            default:
+                return path.isEmpty() ? "正在调用工具: " + toolName : "正在调用工具: " + toolName;
         }
     }
 }

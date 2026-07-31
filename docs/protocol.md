@@ -80,6 +80,20 @@ ws://{cloud-server}:8080/ws/pc?api_key={key}&deviceId={id}
 }
 ```
 
+### QUERY_PROGRESS
+
+查询指定执行的实时进度快照（供前端轮询展示各子任务进度与活动）。
+
+```json
+{
+  "type": "QUERY_PROGRESS",
+  "seqId": "req-xxxx",
+  "payload": {}
+}
+```
+
+响应通过 `PROGRESS_RESP` 消息返回（见下文）。
+
 ---
 
 ## pcAgent 发送的消息（发给 cloud-server）
@@ -152,6 +166,36 @@ Plan 生成完毕，等待用户确认。
   }
 }
 ```
+
+### PROGRESS_RESP
+
+对 `QUERY_PROGRESS` 的响应：各步骤状态（PENDING / RUNNING / SUCCESS / FAILED / CANCELLED）与活动描述。**数据为内存态，任务结束后销毁**，此时返回空结构。
+
+```json
+{
+  "type": "PROGRESS_RESP",
+  "seqId": "seq-xxx",
+  "payload": {
+    "seqId": "seq-xxx",
+    "totalSteps": 11,
+    "completedSteps": 6,
+    "overallProgress": 54,
+    "steps": [
+      {
+        "stepId": 8,
+        "expertName": "writer",
+        "task": "执行全量测试",
+        "status": "RUNNING",
+        "activity": "正在执行命令: mvn test",
+        "elapsedMs": 180000
+      }
+    ]
+  }
+}
+```
+
+- `activity`：步骤内部实时动作（活动层），由专家通过 `ACTIVITY` 事件上报，不持久化
+- `elapsedMs`：当前步骤已运行毫秒数，任务结束后返回 0
 
 ### EXECUTION_RESULT
 

@@ -67,6 +67,7 @@ public class MessageRouter {
                 case "CANCEL_PLAN" -> routeCancelPlan(seqId, sender);
                 case "FILE_LIST_REQ" -> routeFileList(seqId, payload, sender);
                 case "FILE_READ_REQ" -> routeFileRead(seqId, payload, sender);
+                case "QUERY_PROGRESS" -> routeQueryProgress(seqId, sender);
                 case "ON_KICK" -> routeOnKick(seqId);
                 default -> {}
             }
@@ -262,6 +263,19 @@ public class MessageRouter {
 
     private void routeOnKick(String seqId) {
         LOG.warning("收到云端踢出通知（ON_KICK），旧连接已被替换");
+    }
+
+    /**
+     * 查询指定执行的进度快照（内存态，任务结束后返回空结构）
+     */
+    private void routeQueryProgress(String seqId, MessageSender sender) {
+        String snapshot = governanceGateway.getExecutionProgress(seqId);
+        if (snapshot == null) {
+            snapshot = "{\"seqId\":\"" + seqId + "\",\"totalSteps\":0,\"completedSteps\":0,"
+                    + "\"overallProgress\":0,\"steps\":[]}";
+        }
+        sender.send(new Envelope("PROGRESS_RESP", seqId,
+                java.time.Instant.now().toString(), snapshot));
     }
 
     private static void sendAgentStatus(MessageSender sender, String seqId, String agentState, String operation) {

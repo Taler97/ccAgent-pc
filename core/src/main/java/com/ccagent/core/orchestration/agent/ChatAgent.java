@@ -9,6 +9,7 @@ import com.ccagent.api.port.MemoryPort;
 import com.ccagent.infrastructure.util.JsonUtil;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -56,13 +57,16 @@ public class ChatAgent {
         } catch (Exception ignored) {
         }
 
-        List<Map<String, String>> historyMessages = null;
+        List<Map<String, Object>> historyMessages = null;
         if (externalHistory != null && !externalHistory.isEmpty()) {
-            historyMessages = externalHistory;
+            historyMessages = new ArrayList<>();
+            for (Map<String, String> m : externalHistory) {
+                historyMessages.add(new LinkedHashMap<>(m));
+            }
         } else if (!recentTurns.isEmpty()) {
             historyMessages = new ArrayList<>();
             for (ConversationTurn turn : recentTurns) {
-                historyMessages.add(Map.of("role", turn.getRole(), "content", turn.getContent()));
+                historyMessages.add(Map.<String, Object>of("role", turn.getRole(), "content", turn.getContent()));
             }
         }
 

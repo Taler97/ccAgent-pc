@@ -18,7 +18,7 @@ public class ChatRequest {
     private int maxTokens;
     private Double temperature;
     private int timeoutSeconds;
-    private List<Map<String, String>> historyMessages;
+    private List<Map<String, Object>> historyMessages;
 
     public ChatRequest() {}
 
@@ -29,7 +29,7 @@ public class ChatRequest {
 
     public ChatRequest(String systemPrompt, String userPrompt, List<ToolDefinition> tools,
                        boolean allowTools, int maxTokens, Double temperature, int timeoutSeconds,
-                       List<Map<String, String>> historyMessages) {
+                       List<Map<String, Object>> historyMessages) {
         this.systemPrompt = systemPrompt;
         this.userPrompt = userPrompt;
         this.tools = tools;
@@ -54,6 +54,6 @@ public class ChatRequest {
     public void setTemperature(Double temperature) { this.temperature = temperature; }
     public int getTimeoutSeconds() { return timeoutSeconds; }
     public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
-    public List<Map<String, String>> getHistoryMessages() { return historyMessages; }
-    public void setHistoryMessages(List<Map<String, String>> historyMessages) { this.historyMessages = historyMessages; }
+    public List<Map<String, Object>> getHistoryMessages() { return historyMessages; }
+    public void setHistoryMessages(List<Map<String, Object>> historyMessages) { this.historyMessages = historyMessages; }
 }

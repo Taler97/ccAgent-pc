@@ -81,8 +81,12 @@ public class DeepSeekLlmAdapter implements LlmPort {
                     throw new LlmException(ErrorCode.LLM_SERVICE_UNAVAILABLE, "请求频率超限");
                 }
                 if (response.statusCode() != 200) {
+                    String detail = response.body();
+                    String hint = detail != null && !detail.isBlank()
+                            ? " - " + (detail.length() > 300 ? detail.substring(0, 300) : detail)
+                            : "";
                     throw new LlmException(ErrorCode.LLM_SERVICE_UNAVAILABLE,
-                            "DeepSeek 服务返回错误: HTTP " + response.statusCode());
+                            "DeepSeek 服务返回错误: HTTP " + response.statusCode() + hint);
                 }
 
                 future.complete(parseChatResponse(response.body()));
@@ -257,8 +261,24 @@ public class DeepSeekLlmAdapter implements LlmPort {
         messages.add(Map.of("role", "system", "content", request.getSystemPrompt()));
 
         if (request.getHistoryMessages() != null) {
-            for (Map<String, String> history : request.getHistoryMessages()) {
-                messages.add(Map.of("role", history.get("role"), "content", history.get("content")));
+            for (Map<String, Object> history : request.getHistoryMessages()) {
+                // 保留 tool 消息的 name / tool_call_id（DeepSeek v4 强制 OpenAI tool-calling 格式）
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("role", history.get("role"));
+                msg.put("content", history.get("content"));
+                Object name = history.get("name");
+                if (name != null && !String.valueOf(name).isBlank()) {
+                    msg.put("name", name);
+                }
+                Object toolCallId = history.get("tool_call_id");
+                if (toolCallId != null && !String.valueOf(toolCallId).isBlank()) {
+                    msg.put("tool_call_id", toolCallId);
+                }
+                Object toolCalls = history.get("tool_calls");
+                if (toolCalls != null) {
+                    msg.put("tool_calls", toolCalls);
+                }
+                messages.add(msg);
             }
         }
 

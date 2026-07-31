@@ -15,6 +15,7 @@ import com.ccagent.core.event.StepRolledBackEvent;
 import com.ccagent.core.event.StepStartedEvent;
 import com.ccagent.core.governance.context.ExecutionContextHolder;
 import com.ccagent.core.orchestration.context.ExecutionContext;
+import com.ccagent.core.orchestration.progress.ProgressStore;
 import com.ccagent.core.orchestration.repository.ExecutionPlanRepository;
 import com.ccagent.kernel.event.EventBus;
 import com.ccagent.exception.base.ErrorCode;
@@ -48,6 +49,7 @@ public class Dispatcher {
     private final ExecutionPlanRepository executionPlanRepository;
     private final ArtifactStore artifactStore;
     private final EventBus eventBus;
+    private final ProgressStore progressStore;
 
     /**
      * CPU 密集型步骤专用平台线程池（大小 = 可用处理器数）
@@ -66,16 +68,32 @@ public class Dispatcher {
                       ExecutionPlanRepository executionPlanRepository,
                       ArtifactStore artifactStore,
                       EventBus eventBus) {
+        this(expertRegistryPort, executionPlanRepository, artifactStore, eventBus, new ProgressStore());
+    }
+
+    public Dispatcher(ExpertRegistryPort expertRegistryPort,
+                      ExecutionPlanRepository executionPlanRepository,
+                      ArtifactStore artifactStore,
+                      EventBus eventBus,
+                      ProgressStore progressStore) {
         this.expertRegistryPort = expertRegistryPort;
         this.executionPlanRepository = executionPlanRepository;
         this.artifactStore = artifactStore;
         this.eventBus = eventBus;
+        this.progressStore = progressStore;
         this.platformPool = Executors.newFixedThreadPool(
                 Runtime.getRuntime().availableProcessors(), r -> {
                     Thread t = new Thread(r, "dispatcher-platform");
                     t.setDaemon(true);
                     return t;
                 });
+    }
+
+    /**
+     * 获取进度存储（供查询链路读取快照）
+     */
+    public ProgressStore getProgressStore() {
+        return progressStore;
     }
 
     /**
@@ -114,6 +132,9 @@ public class Dispatcher {
         List<Step> steps = plan.getSteps();
         int totalSteps = steps.size();
 
+        // 注册进度快照（内存态，任务结束销毁）
+        progressStore.register(seqId, steps);
+
         // 循环依赖检测
         if (hasCyclicDependency(steps)) {
             throw new PlanCycleException("检测到循环依赖（文件或黑板 Key 级别）");
@@ -130,6 +151,9 @@ public class Dispatcher {
         if (skipIds != null && !skipIds.isEmpty()) {
             completed.addAll(skipIds);
             remaining.removeAll(skipIds);
+            for (int skipId : skipIds) {
+                progressStore.completeStep(seqId, skipId);
+            }
         }
 
         // 执行上下文快照（供虚拟线程继承）
@@ -222,6 +246,9 @@ public class Dispatcher {
 
         } catch (Exception e) {
             observer.onError(e);
+        } finally {
+            // 任务结束：销毁进度数据（活动层不持久化，任务完成即清理）
+            progressStore.clear(seqId);
         }
     }
 
@@ -245,6 +272,31 @@ public class Dispatcher {
                             + ",\"expertName\":\"" + step.getExpertName()
                             + "\",\"status\":\"RUNNING\"}", null);
             observer.onNext(stepStart);
+            progressStore.startStep(seqId, step.getId());
+
+            // 活动拦截：专家推送的 ACTIVITY 事件只写入进度存储（闭包绑定当前 stepId），
+            // 不转发下游，避免并发多步骤时产生大量实时推送流量，由查询接口按需读取
+            StreamObserver<StreamChunk> activityObserver = new StreamObserver<>() {
+                @Override
+                public void onNext(StreamChunk chunk) {
+                    if ("ACTIVITY".equals(chunk.getType())
+                            && chunk.getContent() != null && !chunk.getContent().isEmpty()) {
+                        progressStore.updateActivity(seqId, step.getId(), chunk.getContent());
+                        return;
+                    }
+                    observer.onNext(chunk);
+                }
+
+                @Override
+                public void onError(Throwable error) {
+                    observer.onError(error);
+                }
+
+                @Override
+                public void onComplete() {
+                    observer.onComplete();
+                }
+            };
 
             eventBus.publish(new StepStartedEvent(seqId, sessionId, step.getId(), totalSteps,
                     step.getExpertName(), step.getAffectedFiles()));
@@ -264,7 +316,7 @@ public class Dispatcher {
 
             // 调用专家（黑板模式）
             Expert expert = expertRegistryPort.getExpert(step.getExpertName());
-            String result = expert.execute(step.getTask(), task, inputs, workspaceRoot, observer);
+            String result = expert.execute(step.getTask(), task, inputs, workspaceRoot, activityObserver);
 
             // 写入黑板 writes
             Set<String> writes = step.getWrites();
@@ -288,6 +340,7 @@ public class Dispatcher {
                             + ",\"expertName\":\"" + step.getExpertName()
                             + "\",\"status\":\"SUCCESS\"}", null);
             observer.onNext(stepSuccess);
+            progressStore.completeStep(seqId, step.getId());
 
             eventBus.publish(new StepCompletedEvent(seqId, sessionId, step.getId(), totalSteps,
                     step.getExpertName(), step.getAffectedFiles()));
@@ -309,6 +362,7 @@ public class Dispatcher {
                             + "\",\"status\":\"FAILED\""
                             + ",\"error\":\"专家不存在: " + step.getExpertName() + "\"}", null);
             observer.onNext(stepFailed);
+            progressStore.failStep(seqId, step.getId());
             throw e;
         } catch (Exception e) {
             // 专家执行失败
@@ -328,6 +382,7 @@ public class Dispatcher {
                             + "\",\"status\":\"FAILED\""
                             + ",\"error\":\"" + safeErrMsg + "\"}", null);
             observer.onNext(stepFailed);
+            progressStore.failStep(seqId, step.getId());
             throw new RuntimeException(e);
         }
     }
@@ -344,6 +399,7 @@ public class Dispatcher {
                         + ",\"totalSteps\":" + totalSteps
                         + ",\"status\":\"CANCELLED\"}", null);
         observer.onNext(status);
+        progressStore.cancelStep(seqId, stepId);
     }
 
     /**

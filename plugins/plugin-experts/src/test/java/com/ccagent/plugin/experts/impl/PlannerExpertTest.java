@@ -317,7 +317,7 @@ class PlannerExpertTest {
         ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
         verify(llmPort).chat(captor.capture());
 
-        List<Map<String, String>> history = captor.getValue().getHistoryMessages();
+        List<Map<String, Object>> history = captor.getValue().getHistoryMessages();
         assertThat(history).isNotEmpty();
         assertThat(history.get(0))
                 .containsEntry("role", "user")
