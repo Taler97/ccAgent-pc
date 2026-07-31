@@ -24,6 +24,7 @@ import com.ccagent.exception.tool.ToolException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -48,6 +49,13 @@ public class Dispatcher {
     private final ArtifactStore artifactStore;
     private final EventBus eventBus;
 
+    /**
+     * CPU 密集型步骤专用平台线程池（大小 = 可用处理器数）
+     * <p>虚拟线程不加速 CPU 密集计算，此类任务放在固定大小平台线程池中执行，
+     * 避免抢占 carrier 线程影响其他 IO 密集型虚拟线程。</p>
+     */
+    private final ExecutorService platformPool;
+
     public Dispatcher(ExpertRegistryPort expertRegistryPort,
                       ExecutionPlanRepository executionPlanRepository,
                       EventBus eventBus) {
@@ -62,6 +70,12 @@ public class Dispatcher {
         this.executionPlanRepository = executionPlanRepository;
         this.artifactStore = artifactStore;
         this.eventBus = eventBus;
+        this.platformPool = Executors.newFixedThreadPool(
+                Runtime.getRuntime().availableProcessors(), r -> {
+                    Thread t = new Thread(r, "dispatcher-platform");
+                    t.setDaemon(true);
+                    return t;
+                });
     }
 
     /**
@@ -138,10 +152,13 @@ public class Dispatcher {
                 // 该批次执行结果：stepId → true(成功) / false(失败)
                 Map<Integer, Boolean> batchResult = new ConcurrentHashMap<>();
 
+                // 按线程模型分流：IO 密集 → 虚拟线程；CPU 密集 → 平台线程池
+                List<CompletableFuture<Void>> futures = new ArrayList<>();
+
                 try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                     for (int stepId : ready) {
                         Step step = steps.stream().filter(s -> s.getId() == stepId).findFirst().orElseThrow();
-                        executor.submit(() -> {
+                        Runnable runnable = () -> {
                             ExecutionContextHolder.propagate(parentCtx);
                             try {
                                 executeSingleStep(step, totalSteps, seqId, sessionId,
@@ -152,9 +169,17 @@ public class Dispatcher {
                             } finally {
                                 ExecutionContextHolder.clear();
                             }
-                        });
+                        };
+                        if (step.isCpuIntensive()) {
+                            futures.add(CompletableFuture.runAsync(runnable, platformPool));
+                        } else {
+                            futures.add(CompletableFuture.runAsync(runnable, executor));
+                        }
                     }
                 }
+
+                // 等待虚拟线程 + 平台线程池所有任务完成
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
                 // 检查是否需要清理当前批次
                 boolean hasFailure = batchResult.values().stream().anyMatch(r -> !r);
@@ -421,5 +446,12 @@ public class Dispatcher {
 
         recursionStack.remove(node);
         return false;
+    }
+
+    /**
+     * 关闭平台线程池（虚拟线程池按批次 try-with-resources 自动关闭）
+     */
+    public void shutdown() {
+        platformPool.shutdown();
     }
 }

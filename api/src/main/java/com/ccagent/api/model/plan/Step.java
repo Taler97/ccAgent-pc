@@ -16,6 +16,8 @@ public class Step {
     private Set<String> reads;
     private Set<String> writes;
     private boolean persistOutput;
+    /** 是否 CPU 密集型任务（true 时在平台线程池执行，false 时在虚拟线程执行） */
+    private boolean cpuIntensive;
 
     public Step() {}
 
@@ -40,4 +42,6 @@ public class Step {
     public void setWrites(Set<String> writes) { this.writes = writes; }
     public boolean isPersistOutput() { return persistOutput; }
     public void setPersistOutput(boolean persistOutput) { this.persistOutput = persistOutput; }
+    public boolean isCpuIntensive() { return cpuIntensive; }
+    public void setCpuIntensive(boolean cpuIntensive) { this.cpuIntensive = cpuIntensive; }
 }

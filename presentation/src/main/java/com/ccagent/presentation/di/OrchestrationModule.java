@@ -24,6 +24,7 @@ import javax.sql.DataSource;
 public class OrchestrationModule {
 
     private GovernanceGateway governanceGateway;
+    private Dispatcher dispatcher;
 
     public void init(
             DataSource dataSource,
@@ -56,5 +57,9 @@ public class OrchestrationModule {
 
     public OrchestratorPort getGovernanceGateway() {
         return governanceGateway;
+    }
+
+    public Dispatcher getDispatcher() {
+        return dispatcher;
     }
 }

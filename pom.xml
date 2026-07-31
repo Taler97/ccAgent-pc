@@ -13,14 +13,14 @@
     <description>PC端常驻后台的 AI 程序员团队 - 六边形架构 CLI 程序</description>
 
     <modules>
-        <module>pcAgent/exception</module>
-        <module>pcAgent/infrastructure</module>
-        <module>pcAgent/kernel</module>
-        <module>pcAgent/api</module>
-        <module>pcAgent/core</module>
-        <module>pcAgent/adapter</module>
-        <module>pcAgent/plugins</module>
-        <module>pcAgent/presentation</module>
+        <module>exception</module>
+        <module>infrastructure</module>
+        <module>kernel</module>
+        <module>api</module>
+        <module>core</module>
+        <module>adapter</module>
+        <module>plugins</module>
+        <module>presentation</module>
     </modules>
 
     <properties>

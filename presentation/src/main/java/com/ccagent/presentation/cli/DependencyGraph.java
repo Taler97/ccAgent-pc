@@ -150,5 +150,8 @@ public class DependencyGraph {
         if (governanceModule != null && governanceModule.getAuditor() != null) {
             governanceModule.getAuditor().shutdown();
         }
+        if (orchestrationModule != null && orchestrationModule.getDispatcher() != null) {
+            orchestrationModule.getDispatcher().shutdown();
+        }
     }
 }

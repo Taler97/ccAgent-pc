@@ -173,13 +173,22 @@ Dispatcher 按 DAG 依赖图调度步骤执行，支持文件级和 Key 级别�
 
 启动时生成**健康检查报告**，汇总扫描数、成功/失败数和分类列表。
 
-### 虚拟线程并发
+### 虚拟线程并发 + CPU 密集分流
 
-使用 Java 21 虚拟线程（Virtual Threads）实现高并发任务调度：
+使用 Java 21 虚拟线程（Virtual Threads）实现高并发任务调度，并针对 CPU 密集任务提供线程模型分流：
 
 - `ChatAgent` 使用虚拟线程处理每个对话请求
-- `Dispatcher` 使用虚拟线程并发调度无依赖的 Step
+- `Dispatcher` 使用虚拟线程并发调度无依赖的 Step（`Executors.newVirtualThreadPerTaskExecutor`）
 - `TaskContextImpl` 使用 `CompletableFuture` 实现跨线程的产物同步
+
+**线程模型分流机制**：每个 Step 可声明 `cpuIntensive` 标志：
+
+| Step 类型 | 执行池 | 适用场景 |
+|-----------|--------|---------|
+| IO 密集（默认） | 虚拟线程 | LLM 调用、文件读写、等待黑板产物 |
+| CPU 密集（`cpuIntensive: true`） | 平台线程池（大小 = CPU 核数） | 代码扫描、正则匹配、复杂计算 |
+
+虚拟线程不加速 CPU 密集计算，且会抢占有限的 carrier 线程影响其他 IO 任务，因此 CPU 密集步骤被分流到独立的平台线程池执行，两池通过 `CompletableFuture.allOf()` 统一等待批次完成。
 
 ---
 
