@@ -1,0 +1,6 @@
+name: planner-expert
+version: 1.0.0
+type: EXPERT
+description: 任务规划专家
+class: com.ccagent.plugin.experts.impl.PlannerExpert
+dependencies: []

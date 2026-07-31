@@ -1,0 +1,6 @@
+name: file-operation-tool
+version: 1.0.0
+type: TOOL
+description: 文件系统操作，支持 copy/move/delete/mkdir/stat
+class: com.ccagent.plugin.tools.impl.FileOperationTool
+dependencies: []

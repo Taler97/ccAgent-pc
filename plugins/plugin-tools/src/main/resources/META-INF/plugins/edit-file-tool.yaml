@@ -1,0 +1,6 @@
+name: edit-file-tool
+version: 1.0.0
+type: TOOL
+description: 编辑文件内容，支持 replace/insert/delete 三种模式
+class: com.ccagent.plugin.tools.impl.EditFileTool
+dependencies: []

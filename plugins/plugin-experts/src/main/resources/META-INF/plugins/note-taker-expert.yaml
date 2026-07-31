@@ -1,0 +1,6 @@
+name: note-taker-expert
+version: 1.0.0
+type: EXPERT
+description: 笔记记录专家
+class: com.ccagent.plugin.experts.impl.NoteTakerExpert
+dependencies: []

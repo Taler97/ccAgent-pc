@@ -1,0 +1,38 @@
+# ccAgent 配置文件（放项目根目录）
+# 配好这 3 项后直接运行 AgentMain 即可启动
+
+auth:
+  # Cloud 服务器 API Key
+  api-key: "Qse2ffed"
+
+  # 代码工作区目录（用正斜杠 / 或双反斜杠 \\）
+  workspace-dir: "G:/Test"
+
+llm:
+  # DeepSeek API Key
+  api-key: "sk-db1762b445ee4ae3b0919441cda51eb8"
+  # 模型名
+  model: "deepseek-v4-flash"
+  # API 端点
+  base-url: "https://api.deepseek.com"
+
+websocket:
+  url: "ws://localhost:8080/ws"
+
+# 数据同步配置（独立运行模式下有效）
+sync:
+  enabled: true
+  cloud-url: "http://localhost:8080"
+  api-key: "Qse2ffed"
+  interval-minutes: 5
+  auto-sync: true
+
+# CLI 独立运行模式配置
+cli:
+  prompt: "ccAgent> "
+  stream-output: true
+  color-enabled: true
+
+# HTTP 服务配置（--http 模式下有效）
+http:
+  port: 3000

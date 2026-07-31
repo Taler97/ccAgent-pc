@@ -1,0 +1,6 @@
+name: rollback-manager-listener
+version: 1.0.0
+type: LISTENER
+description: 回滚管理器，监听步骤失败事件自动回滚
+class: com.ccagent.plugin.governance.rollback.RollbackManager
+dependencies: []

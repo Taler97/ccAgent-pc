@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.ccagent</groupId>
+        <artifactId>ccagent-pc</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+    <artifactId>presentation</artifactId>
+    <packaging>jar</packaging>
+    <name>ccAgent - Presentation Layer</name>
+    <description>接入通信层：CLI入口 + WebSocket</description>
+    <dependencies>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>adapter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>exception</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>infrastructure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>plugin-tools</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>plugin-experts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.ccagent</groupId>
+            <artifactId>plugin-governance</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>

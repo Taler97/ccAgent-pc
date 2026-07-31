@@ -1,0 +1,6 @@
+name: summarizer-expert
+version: 1.0.0
+type: EXPERT
+description: 摘要总结专家
+class: com.ccagent.plugin.experts.impl.SummarizerExpert
+dependencies: []

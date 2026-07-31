@@ -1,0 +1,6 @@
+name: fault-analyzer-expert
+version: 1.0.0
+type: EXPERT
+description: 步骤执行失败诊断专家
+class: com.ccagent.plugin.experts.impl.FaultAnalyzerExpert
+dependencies: []

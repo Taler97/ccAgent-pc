@@ -1,0 +1,6 @@
+name: write-file-tool
+version: 1.0.0
+type: TOOL
+description: 写入或覆盖指定文件的内容
+class: com.ccagent.plugin.tools.impl.WriteFileTool
+dependencies: []

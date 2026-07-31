@@ -1,0 +1,6 @@
+name: search-content-tool
+version: 1.0.0
+type: TOOL
+description: 在文件中搜索匹配指定模式的内容，支持正则和文件过滤
+class: com.ccagent.plugin.tools.impl.SearchContentTool
+dependencies: []

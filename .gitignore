@@ -1,0 +1,29 @@
+# Maven 构建产物
+target/
+**/target/
+
+# 运行时数据
+.codepal/
+data/
+logs/
+*.mv.db
+*.trace.db
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings
+
+# 系统
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+*~
+
+# TRAE
+.trae/
+.reasonix/

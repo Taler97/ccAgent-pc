@@ -1,0 +1,6 @@
+name: researcher-expert
+version: 1.0.0
+type: EXPERT
+description: 研究分析专家
+class: com.ccagent.plugin.experts.impl.ResearcherExpert
+dependencies: []

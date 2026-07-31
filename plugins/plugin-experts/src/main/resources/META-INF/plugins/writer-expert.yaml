@@ -1,0 +1,6 @@
+name: writer-expert
+version: 1.0.0
+type: EXPERT
+description: 代码编写专家
+class: com.ccagent.plugin.experts.impl.WriterExpert
+dependencies: []

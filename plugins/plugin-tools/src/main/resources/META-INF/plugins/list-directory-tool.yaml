@@ -1,0 +1,6 @@
+name: list-directory-tool
+version: 1.0.0
+type: TOOL
+description: 列出目录内容，支持递归、文件过滤和深度限制
+class: com.ccagent.plugin.tools.impl.ListDirectoryTool
+dependencies: []

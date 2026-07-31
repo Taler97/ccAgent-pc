@@ -1,0 +1,6 @@
+name: read-file-tool
+version: 1.0.0
+type: TOOL
+description: 读取文件内容，支持按行号范围分段读取
+class: com.ccagent.plugin.tools.impl.ReadFileTool
+dependencies: []

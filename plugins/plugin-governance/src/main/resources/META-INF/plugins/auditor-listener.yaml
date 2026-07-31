@@ -1,0 +1,6 @@
+name: auditor-listener
+version: 1.0.0
+type: LISTENER
+description: 审计记录器，异步记录全链路关键事件到 audit.log
+class: com.ccagent.plugin.governance.audit.Auditor
+dependencies: []

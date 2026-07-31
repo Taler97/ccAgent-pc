@@ -1,0 +1,6 @@
+name: organizer-expert
+version: 1.0.0
+type: EXPERT
+description: 文件整理专家
+class: com.ccagent.plugin.experts.impl.OrganizerExpert
+dependencies: []

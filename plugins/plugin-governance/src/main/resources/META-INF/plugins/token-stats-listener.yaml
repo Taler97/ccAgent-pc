@@ -1,0 +1,6 @@
+name: token-stats-listener
+version: 1.0.0
+type: LISTENER
+description: Token 统计服务，监听 LLM 调用事件记录 Token 消耗
+class: com.ccagent.plugin.governance.audit.TokenStatsService
+dependencies: []
