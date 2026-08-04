@@ -94,6 +94,20 @@ ws://{cloud-server}:8080/ws/pc?api_key={key}&deviceId={id}
 
 响应通过 `PROGRESS_RESP` 消息返回（见下文）。
 
+### MCP_STATUS_REQ
+
+查询 PC 端 MCP server 连接状态（供前端 MCP 面板展示）。
+
+```json
+{
+  "type": "MCP_STATUS_REQ",
+  "seqId": "req-xxxx",
+  "payload": {}
+}
+```
+
+响应通过 `MCP_STATUS_RES` 消息返回（见下文）。
+
 ---
 
 ## pcAgent 发送的消息（发给 cloud-server）
@@ -196,6 +210,36 @@ Plan 生成完毕，等待用户确认。
 
 - `activity`：步骤内部实时动作（活动层），由专家通过 `ACTIVITY` 事件上报，不持久化
 - `elapsedMs`：当前步骤已运行毫秒数，任务结束后返回 0
+
+### MCP_STATUS_RES
+
+对 `MCP_STATUS_REQ` 的响应：PC 端各 MCP server 的连接状态与已注册工具数。
+
+```json
+{
+  "type": "MCP_STATUS_RES",
+  "seqId": "seq-xxx",
+  "payload": {
+    "servers": [
+      {
+        "name": "github",
+        "connected": true,
+        "toolCount": 5
+      },
+      {
+        "name": "internal-db",
+        "connected": false,
+        "toolCount": 0,
+        "error": "Connection refused"
+      }
+    ]
+  }
+}
+```
+
+- `connected`：该 server 是否连接成功；失败时该 server 被跳过，不影响引擎启动
+- `toolCount`：注册的工具数（`mcp_<prefix>_<tool>`）
+- `error`：仅连接失败时存在，为失败原因
 
 ### EXECUTION_RESULT
 

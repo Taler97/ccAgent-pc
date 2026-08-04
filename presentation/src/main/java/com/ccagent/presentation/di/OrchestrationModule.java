@@ -6,6 +6,7 @@ import com.ccagent.api.port.MemoryPort;
 import com.ccagent.api.port.OrchestratorPort;
 import com.ccagent.core.context.ArtifactStore;
 import com.ccagent.core.context.FileArtifactStore;
+import com.ccagent.core.skill.SkillRegistry;
 import com.ccagent.plugin.governance.audit.Auditor;
 import com.ccagent.plugin.governance.audit.TokenStatsService;
 import com.ccagent.core.governance.policy.PlanSanitizer;
@@ -40,6 +41,25 @@ public class OrchestrationModule {
             Auditor auditor,
             LocalDataRepository localDataRepo,
             EventBus eventBus) {
+        init(dataSource, proxyLlm, memoryPort, expertRegistry, rollbackManager,
+                tokenQuotaService, tokenStatsService, policyEnforcer, planSanitizer,
+                auditor, localDataRepo, eventBus, null);
+    }
+
+    public void init(
+            DataSource dataSource,
+            LlmPort proxyLlm,
+            MemoryPort memoryPort,
+            ExpertRegistryPort expertRegistry,
+            RollbackManager rollbackManager,
+            TokenQuotaService tokenQuotaService,
+            TokenStatsService tokenStatsService,
+            PolicyEnforcer policyEnforcer,
+            PlanSanitizer planSanitizer,
+            Auditor auditor,
+            LocalDataRepository localDataRepo,
+            EventBus eventBus,
+            SkillRegistry skillRegistry) {
 
         ExecutionPlanRepository planRepo = new ExecutionPlanRepository(dataSource);
 
@@ -49,7 +69,7 @@ public class OrchestrationModule {
         Dispatcher dispatcher = new Dispatcher(expertRegistry, planRepo, artifactStore, eventBus, progressStore);
         SimpleOrchestrator orchestrator = new SimpleOrchestrator(
                 chatAgent, dispatcher, memoryPort, expertRegistry,
-                planRepo, localDataRepo, artifactStore, eventBus);
+                planRepo, localDataRepo, artifactStore, eventBus, skillRegistry);
 
         governanceGateway = new GovernanceGateway(
                 orchestrator, policyEnforcer, tokenQuotaService,

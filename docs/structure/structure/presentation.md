@@ -14,9 +14,9 @@
 
 | 类 | 职责 |
 |-----|------|
-| `AgentMain.java` | **统一主入口**：默认 CLI 模式、`--headless` 守护模式、`--standalone` 旧版兼容 |
+| `AgentMain.java` | **唯一主入口**：默认 CLI 模式、`--background` 远程模式、`--standalone` 旧版兼容；公共启动流程（单实例锁 + 引擎组装） |
+| `DaemonLock.java` | **单实例锁**：`.codepal/daemon.lock` 文件锁，保证同一时刻只有一个引擎进程 |
 | `StandaloneAgentRunner.java` | **CLI 交互运行器**：主循环、命令处理、流式输出、会话管理、文件浏览、Token 统计 |
-| `AgentDaemon.java` | **守护进程管理器**：无 HTTP 的后台运行模式，通过 WebSocket 接受远程调度 |
 | `DependencyGraph.java` | **依赖图表**：协调所有 DI 模块的初始化顺序 |
 
 ### di — 依赖注入模块
@@ -48,8 +48,8 @@
 
 | 模式 | 命令 | 说明 |
 |------|------|------|
-| **CLI 交互** | `java ... AgentMain` | 引擎嵌入进程，命令行直接对话 |
-| **守护进程** | `java ... AgentMain --headless` | 引擎后台运行，通过 WebSocket 接受调度 |
+| **CLI 交互** | `java ... AgentMain` | 引擎嵌入进程，命令行直接对话，纯本地不连云端 |
+| **远程模式** | `java ... AgentMain --background` | 引擎后台运行，通过 WebSocket 接受云端调度（旧参数 `--headless` 兼容） |
 | **旧版兼容** | `java ... AgentMain --standalone` | 保留旧版入口兼容 |
 
 ## 依赖关系
