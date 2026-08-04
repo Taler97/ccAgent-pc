@@ -31,12 +31,30 @@
 
 ### ws — WebSocket 客户端
 
+> 完整消息类型与 Envelope 定义见 [protocol.md](../../protocol.md)。
+
 | 类 | 职责 |
 |-----|------|
 | `CloudWebSocketClient.java` | 云端 WebSocket 客户端，连接 Cloud Server 接受远程任务调度 |
-| `MessageRouter.java` | 消息路由分发器，将 WS 消息路由到对应的处理器 |
+| `CloudWsSession.java` | WS 会话封装：持有 CloudWebSocketClient 引用并实现 MessageSender 接口 |
+| `MessageRouter.java` | **纯分发器**（~81 行，无业务代码）：解析 Envelope → `handlerRegistry` 按 type 查表 → `SeqLockManager` 加锁 → 调用对应 `WsMessageHandler` |
+| `SeqLockManager.java` | seqId 粒度锁管理，按请求流水号串行化防止并发 |
 | `ReconnectManager.java` | 断线重连管理器（指数退避） |
 | `StateManager.java` | 连接状态管理 |
+
+#### handler/ — WS 消息处理器（5 个）
+
+> 每个 Handler 实现 `WsMessageHandler` 接口（`supportedTypes()` + `handle()`），`HandlerSupport` 基类提供 payload 解析、响应构造、状态上报等通用方法。
+
+| Handler | 处理的 type | 分类 | 是否走 LLM |
+|---------|-----------|------|-----------|
+| `SessionHandler.java` | `CREATE_SESSION` / `LIST_SESSIONS` | CONTROL / QUERY | 否 |
+| `ExecutionHandler.java` | `EXECUTE` / `EXECUTE_PLAN` / `CANCEL_PLAN` / `CANCEL_EXECUTION` / `ROLLBACK_DIALOG` / `TOOL_APPROVAL` | INTELLIGENT + CONTROL | EXECUTE ✅ / 其他 ❌ |
+| `FileHandler.java` | `FILE_LIST_REQ` / `FILE_READ_REQ` | QUERY | 否 |
+| `StatusHandler.java` | `QUERY_PROGRESS` / `SKILL_LIST_REQ` / `MCP_STATUS_REQ` | QUERY | 否 |
+| `MiscHandler.java` | `PING` / `ON_KICK` | QUERY / CONTROL | 否 |
+
+> **新增业务流程**：新建 `XxxHandler extends HandlerSupport implements WsMessageHandler` → 在 `MessageRouter` 构造函数里 `register(new XxxHandler(...))` 一行。
 
 ### observer — 观察者
 
