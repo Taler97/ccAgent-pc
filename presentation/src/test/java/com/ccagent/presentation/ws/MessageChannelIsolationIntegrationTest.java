@@ -205,6 +205,55 @@ class MessageChannelIsolationIntegrationTest {
     }
 
     /**
+     * MCP_IMPORT_REQ（configChannel）在 EXECUTE 持锁期间应立即响应。
+     * 验证配置/导入通道不被对话通道阻塞（四通道隔离）。
+     */
+    @Test
+    void mcpImportShouldNotBeBlockedByExecuteLock() throws Exception {
+        // EXECUTE 持锁 2s
+        CountDownLatch executeStarted = new CountDownLatch(1);
+        doAnswer(inv -> {
+            executeStarted.countDown();
+            Thread.sleep(2000);
+            return null;
+        }).when(governanceGateway).executeWithSeqId(any(ExecuteRequest.class), anyString(), any(StreamObserver.class));
+
+        // MCP_IMPORT_REQ → configChannel → StatusHandler.importMcp（mcpManager 为 null → 回 ERROR）
+        List<String> receivedTypes = new ArrayList<>();
+        CountDownLatch errorReceived = new CountDownLatch(1);
+        MessageSender sender = envelope -> {
+            receivedTypes.add(envelope.getType());
+            if ("ERROR".equals(envelope.getType())) {
+                errorReceived.countDown();
+            }
+        };
+
+        // 1. 发送 EXECUTE（seqId=seq-1，持锁 2s）
+        dispatcher.dispatch(toJson(new Envelope("EXECUTE", "seq-1",
+                Instant.now().toString(),
+                new ExecuteRequest("ws", "sess", "test", true))), sender);
+
+        // 2. 等 EXECUTE 开始持锁
+        assertThat(executeStarted.await(1, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(200);
+
+        // 3. 发送 MCP_IMPORT_REQ（configChannel，空 configs）
+        long start = System.currentTimeMillis();
+        dispatcher.dispatch(toJson(new Envelope("MCP_IMPORT_REQ", "seq-2",
+                Instant.now().toString(),
+                Map.of("configs", List.of()))), sender);
+
+        // 4. ERROR 响应应在 1s 内返回（configChannel 不被 dialogChannel 阻塞）
+        assertThat(errorReceived.await(1, TimeUnit.SECONDS))
+                .as("MCP_IMPORT_REQ 不应被 EXECUTE 的 seqId 锁阻塞")
+                .isTrue();
+        long latency = System.currentTimeMillis() - start;
+        assertThat(latency)
+                .as("MCP 导入延迟应 < 1000ms，实际 " + latency + "ms")
+                .isLessThan(1000);
+    }
+
+    /**
      * QUERY_PROGRESS（utilChannel）在 EXECUTE 持锁期间应立即返回。
      * 这是用户反馈"连通测试/查询进度被阻塞"的核心场景。
      */

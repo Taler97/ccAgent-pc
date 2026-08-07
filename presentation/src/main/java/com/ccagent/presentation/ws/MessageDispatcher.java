@@ -10,12 +10,13 @@ import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 /**
- * 消息分发器: 按消息类型将消息分发到独立通道, 实现对话/工具/控制三类功能互不阻塞.
- * <p>三通道隔离设计:
+ * 消息分发器: 按消息类型将消息分发到独立通道, 实现对话/工具/控制/配置四类功能互不阻塞.
+ * <p>四通道隔离设计:
  * <ul>
  *   <li>dialogChannel - 对话/agent 执行 (EXECUTE/EXECUTE_PLAN/CANCEL_EXECUTION/CANCEL_PLAN/ROLLBACK_DIALOG/TOOL_APPROVAL)</li>
- *   <li>utilChannel - 工具操作 (CREATE_SESSION/FILE_LIST_REQ/QUERY_PROGRESS 等), 不阻塞对话</li>
+ *   <li>utilChannel - 只读工具操作 (CREATE_SESSION/FILE_LIST_REQ/QUERY_PROGRESS 等), 不阻塞对话</li>
  *   <li>controlChannel - 心跳/控制 (PING/ON_KICK), 最高优先级</li>
+ *   <li>configChannel - 配置/导入 (UPDATE_LLM_CONFIG/QUERY_LLM_CONFIG/MCP_IMPORT_REQ), 旁路操作不碰会话状态</li>
  * </ul>
  * 所有通道均使用 Java 21 虚拟线程, IO 阻塞时自动让出 carrier 线程, 互不阻塞.</p>
  */
@@ -34,10 +35,16 @@ public class MessageDispatcher {
             "PING", "ON_KICK"
     );
 
+    /** 配置/导入类消息：LLM 配置热更、MCP 导入，旁路操作不碰会话状态 */
+    public static final Set<String> CONFIG_TYPES = Set.of(
+            "UPDATE_LLM_CONFIG", "QUERY_LLM_CONFIG", "MCP_IMPORT_REQ"
+    );
+
     private final MessageRouter router;
     private final ExecutorService dialogChannel = Executors.newVirtualThreadPerTaskExecutor();
     private final ExecutorService utilChannel = Executors.newVirtualThreadPerTaskExecutor();
     private final ExecutorService controlChannel = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService configChannel = Executors.newVirtualThreadPerTaskExecutor();
 
     public MessageDispatcher(MessageRouter router) {
         this.router = router;
@@ -71,6 +78,7 @@ public class MessageDispatcher {
 
     private ExecutorService selectChannel(String type) {
         if (CONTROL_TYPES.contains(type)) return controlChannel;
+        if (CONFIG_TYPES.contains(type)) return configChannel;
         if (DIALOG_TYPES.contains(type)) return dialogChannel;
         return utilChannel;
     }
@@ -79,5 +87,6 @@ public class MessageDispatcher {
         dialogChannel.shutdown();
         utilChannel.shutdown();
         controlChannel.shutdown();
+        configChannel.shutdown();
     }
 }
