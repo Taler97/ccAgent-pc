@@ -115,6 +115,33 @@ class ExecutionHandlerTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void executeStreamOnNextPlanReadySendsWaitApproval() {
+        ExecutionHandler handler = new ExecutionHandler(gateway);
+
+        // 捕获 observer 并触发 PLAN_READY（模拟 SimpleOrchestrator 非 autoMode 下发计划）
+        ArgumentCaptor<StreamObserver<StreamChunk>> captor =
+                ArgumentCaptor.forClass(StreamObserver.class);
+        doAnswer(inv -> {
+            StreamObserver<StreamChunk> obs = inv.getArgument(2);
+            obs.onNext(new StreamChunk("seq-1", "PLAN_READY",
+                    "{\"summary\":\"plan\",\"steps\":[],\"stepCount\":0}", null));
+            return null;
+        }).when(gateway).executeWithSeqId(any(), anyString(), any());
+
+        CapturingSender sender = new CapturingSender();
+        handler.handle(env("EXECUTE", "seq-1", Map.of("prompt", "hi", "sessionId", "s-1")), sender);
+
+        // AGENT_STATUS(PLANNING) → AGENT_STATUS(WAIT_APPROVAL) → PLAN_READY
+        assertThat(sender.sent).hasSize(3);
+        assertThat(sender.sent.get(0).getType()).isEqualTo("AGENT_STATUS");
+        assertThat((String) sender.sent.get(0).getPayload()).contains("PLANNING");
+        assertThat(sender.sent.get(1).getType()).isEqualTo("AGENT_STATUS");
+        assertThat((String) sender.sent.get(1).getPayload()).contains("WAIT_APPROVAL");
+        assertThat(sender.sent.get(2).getType()).isEqualTo("PLAN_READY");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void executeStreamOnErrorSendsError() {
         ExecutionHandler handler = new ExecutionHandler(gateway);
 
@@ -206,23 +233,27 @@ class ExecutionHandlerTest {
     // ===== EXECUTE_PLAN =====
 
     @Test
-    void executePlanDelegatesConfirmedTrue() {
+    void executePlanConfirmedSendsExecuting() {
         ExecutionHandler handler = new ExecutionHandler(gateway);
+        CapturingSender sender = new CapturingSender();
 
-        handler.handle(env("EXECUTE_PLAN", "seq-5", Map.of("confirmed", true)),
-                new CapturingSender());
+        handler.handle(env("EXECUTE_PLAN", "seq-5", Map.of("confirmed", true)), sender);
 
         verify(gateway).executePlan("seq-5", true);
+        assertThat(sender.sent).hasSize(1);
+        assertThat((String) sender.sent.get(0).getPayload()).contains("EXECUTING");
     }
 
     @Test
-    void executePlanDelegatesConfirmedFalse() {
+    void executePlanRejectedSendsIdle() {
         ExecutionHandler handler = new ExecutionHandler(gateway);
+        CapturingSender sender = new CapturingSender();
 
-        handler.handle(env("EXECUTE_PLAN", "seq-5b", Map.of("confirmed", false)),
-                new CapturingSender());
+        handler.handle(env("EXECUTE_PLAN", "seq-5b", Map.of("confirmed", false)), sender);
 
         verify(gateway).executePlan("seq-5b", false);
+        assertThat(sender.sent).hasSize(1);
+        assertThat((String) sender.sent.get(0).getPayload()).contains("IDLE");
     }
 
     // ===== CANCEL_PLAN =====

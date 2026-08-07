@@ -50,6 +50,11 @@ public class ExecutionHandler extends HandlerSupport implements WsMessageHandler
         governanceGateway.executeWithSeqId(request, seqId, new StreamObserver<>() {
             @Override
             public void onNext(StreamChunk chunk) {
+                // Plan 就绪即进入"等待用户确认"阶段：补发 WAIT_APPROVAL，让前端
+                // 以 AGENT_STATUS 为唯一状态源派生交互状态，无需自行推断 planPending
+                if ("PLAN_READY".equals(chunk.getType())) {
+                    sendAgentStatus(sender, seqId, "WAIT_APPROVAL", "等待确认执行计划");
+                }
                 sender.send(new Envelope(chunk.getType(), seqId,
                         Instant.now().toString(), chunk.getContent()));
             }
@@ -96,9 +101,11 @@ public class ExecutionHandler extends HandlerSupport implements WsMessageHandler
 
     private void executePlan(Envelope envelope, MessageSender sender) {
         String seqId = envelope.getSeqId();
-        sendAgentStatus(sender, seqId, "EXECUTING", "正在执行任务...");
         Map<String, Object> data = payloadAsMap(envelope);
         boolean confirmed = Boolean.TRUE.equals(data.get("confirmed"));
+        // 按确认结果上报状态：确认 → EXECUTING；拒绝 → IDLE（此前无条件发 EXECUTING，拒绝时前端误入执行中）
+        sendAgentStatus(sender, seqId, confirmed ? "EXECUTING" : "IDLE",
+                confirmed ? "正在执行任务..." : "已拒绝执行计划");
         governanceGateway.executePlan(seqId, confirmed);
     }
 

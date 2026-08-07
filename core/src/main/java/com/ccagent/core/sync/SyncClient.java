@@ -28,7 +28,7 @@ public class SyncClient {
     public boolean isCloudReachable() {
         try {
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(cloudUrl + "/api/health"))
+                    .uri(URI.create(cloudUrl + "/health"))
                     .header("Authorization", "Bearer " + apiKey)
                     .timeout(Duration.ofSeconds(5))
                     .GET()

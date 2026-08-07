@@ -333,6 +333,7 @@ mvn exec:java -pl presentation
 | 文档 | 说明 | 面向 |
 |------|------|------|
 | [docs/protocol.md](docs/protocol.md) | WebSocket 协议（消息格式、类型、状态流转） | Cloud Server |
+| [docs/core-mechanisms.md](docs/core-mechanisms.md) | 核心机制：DAG 调度、黑板合并、产物持久化、断点续存、事件治理 | 引擎开发者 |
 
 ---
 

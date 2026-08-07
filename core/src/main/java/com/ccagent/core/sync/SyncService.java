@@ -90,8 +90,9 @@ public class SyncService {
             case "conversation" -> localDataRepo.queryConversation(entityId);
             case "token_stats" -> localDataRepo.queryTokenStats(entityId);
             default -> {
-                LOG.warning("未知同步实体类型: " + entityType);
-                yield entityType + ":" + entityId;
+                LOG.warning("未知同步实体类型，跳过上传: " + entityType);
+                // 抛异常由 syncAll 的 catch 块捕获计为 error，避免把 "type:id" 字符串当作数据上传产生脏数据
+                throw new IllegalArgumentException("未知同步实体类型: " + entityType);
             }
         };
     }

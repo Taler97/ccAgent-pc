@@ -238,8 +238,9 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
      * 从 task 中提取文件路径列表
      */
     protected java.util.List<String> extractFilePaths(String task) {
+        // [：:\s]+ 要求关键词后必须紧跟分隔符，避免"路径规划""文件夹"等中文词内误匹配
         java.util.regex.Matcher m = java.util.regex.Pattern.compile(
-                "(?:file|路径|文件)[：:\\s]*([^\\s,，\\n]+)").matcher(task);
+                "(?:file|路径|文件)[：:\\s]+([^\\s,，\\n]+)").matcher(task);
         java.util.List<String> paths = new java.util.ArrayList<>();
         while (m.find()) paths.add(m.group(1).trim());
         return paths;
@@ -250,7 +251,7 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
      */
     protected String extractFirstFilePath(String task) {
         java.util.regex.Matcher m = java.util.regex.Pattern.compile(
-                "(?:file|路径|文件|source)[：:\\s]*([^\\s,，\\n]+)").matcher(task);
+                "(?:file|路径|文件|source)[：:\\s]+([^\\s,，\\n]+)").matcher(task);
         return m.find() ? m.group(1).trim() : "";
     }
 

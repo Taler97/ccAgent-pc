@@ -33,6 +33,10 @@ public class Compressor {
      * @return 压缩结果（新摘要 + 剩余轮次 + 总轮次数）
      */
     public CompressResult compress(List<ConversationTurn> recentTurns, String currentSummary) {
+        // 无轮次可压缩时返回 null，由调用方决定处理（与 LLM 失败语义一致）
+        if (recentTurns == null || recentTurns.isEmpty()) {
+            return null;
+        }
         int compressCount = Math.max(1, recentTurns.size() / 3);
         List<ConversationTurn> toCompress = recentTurns.subList(0, compressCount);
         List<ConversationTurn> remaining = recentTurns.subList(compressCount, recentTurns.size());
