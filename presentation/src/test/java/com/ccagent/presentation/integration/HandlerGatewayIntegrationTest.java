@@ -31,11 +31,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,7 +64,7 @@ class HandlerGatewayIntegrationTest {
     private EventBus eventBus;
 
     // 事件收集
-    private final List<Object> publishedEvents = new ArrayList<>();
+    private final List<Object> publishedEvents = Collections.synchronizedList(new ArrayList<>());
 
     // 管线
     private MessageRouter router;
@@ -96,8 +94,18 @@ class HandlerGatewayIntegrationTest {
     // ===== 辅助 =====
 
     static class CapturingSender implements MessageSender {
-        final List<Envelope> sent = new ArrayList<>();
+        final List<Envelope> sent = Collections.synchronizedList(new ArrayList<>());
         public void send(Envelope e) { sent.add(e); }
+    }
+
+    /** 轮询等待异步消息到达（EXECUTE 已异步提交，消息由执行线程产出） */
+    private static void awaitUntil(java.util.function.BooleanSupplier cond, String msg) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            if (cond.getAsBoolean()) return;
+            Thread.sleep(20);
+        }
+        assertThat(cond.getAsBoolean()).as(msg).isTrue();
     }
 
     private String json(String type, String seqId, Object payload) {
@@ -164,7 +172,7 @@ class HandlerGatewayIntegrationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void execute_fullChain_onComplete_sendsPlanningIdleResultAndEvents() {
+    void execute_fullChain_onComplete_sendsPlanningIdleResultAndEvents() throws Exception {
         doAnswer(inv -> {
             StreamObserver<StreamChunk> obs = inv.getArgument(2);
             obs.onComplete();
@@ -176,11 +184,13 @@ class HandlerGatewayIntegrationTest {
 
         // 2 条响应：AGENT_STATUS(PLANNING) → AGENT_STATUS(IDLE)
         // EXECUTION_RESULT 由 SimpleOrchestrator 通过 onNext 发送（携带 token），onComplete 不再重复发送
+        awaitUntil(() -> sender.sent.size() >= 2, "应收到 IDLE");
         assertThat(sender.sent).hasSize(2);
         assertThat((String) sender.sent.get(0).getPayload()).contains("PLANNING");
         assertThat((String) sender.sent.get(1).getPayload()).contains("IDLE");
 
         // 事件：Started → Completed
+        awaitUntil(() -> publishedEvents.size() >= 2, "应发布 Started/Completed");
         assertThat(publishedEvents).hasSize(2);
         assertThat(publishedEvents.get(0)).isInstanceOf(ExecutionStartedEvent.class);
         assertThat(publishedEvents.get(1)).isInstanceOf(ExecutionCompletedEvent.class);
@@ -190,7 +200,7 @@ class HandlerGatewayIntegrationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void execute_fullChain_onNext_forwardsStreamChunk() {
+    void execute_fullChain_onNext_forwardsStreamChunk() throws Exception {
         doAnswer(inv -> {
             StreamObserver<StreamChunk> obs = inv.getArgument(2);
             obs.onNext(new StreamChunk("seq-6", "STEP_CHUNK", "partial-data", null));
@@ -202,6 +212,7 @@ class HandlerGatewayIntegrationTest {
                 Map.of("workspaceId", "ws-1", "sessionId", "s-1", "prompt", "test")), sender);
 
         // PLANNING → STEP_CHUNK → IDLE
+        awaitUntil(() -> sender.sent.size() >= 3, "应收到 STEP_CHUNK");
         assertThat(sender.sent).hasSize(3);
         assertThat(sender.sent.get(1).getType()).isEqualTo("STEP_CHUNK");
         assertThat((String) sender.sent.get(1).getPayload()).isEqualTo("partial-data");
@@ -209,7 +220,7 @@ class HandlerGatewayIntegrationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void execute_fullChain_onError_sendsErrorAndFailedEvent() {
+    void execute_fullChain_onError_sendsErrorAndFailedEvent() throws Exception {
         doAnswer(inv -> {
             StreamObserver<StreamChunk> obs = inv.getArgument(2);
             obs.onError(new RuntimeException("LLM 调用超时"));
@@ -220,10 +231,13 @@ class HandlerGatewayIntegrationTest {
                 Map.of("workspaceId", "ws-1", "sessionId", "s-1", "prompt", "test")), sender);
 
         // PLANNING → AGENT_STATUS(ERROR) → ERROR
-        assertThat(sender.sent).hasSizeGreaterThanOrEqualTo(2);
+        awaitUntil(() -> !sender.sent.isEmpty()
+                && "ERROR".equals(sender.sent.get(sender.sent.size() - 1).getType()), "应收到 ERROR");
+        assertThat(sender.sent).hasSize(3);
         assertThat((String) sender.sent.get(1).getPayload()).contains("ERROR");
 
         // 事件：Started → Failed
+        awaitUntil(() -> publishedEvents.size() >= 2, "应发布 Started/Failed");
         assertThat(publishedEvents).hasSize(2);
         assertThat(publishedEvents.get(1)).isInstanceOf(ExecutionFailedEvent.class);
         ExecutionFailedEvent failed = (ExecutionFailedEvent) publishedEvents.get(1);
@@ -238,7 +252,7 @@ class HandlerGatewayIntegrationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void execute_fullChain_emptyWorkspace_governanceBlocks() {
+    void execute_fullChain_emptyWorkspace_governanceBlocks() throws Exception {
         router.route(json("EXECUTE", "seq-8",
                 Map.of("workspaceId", "", "sessionId", "s-1", "prompt", "test")), sender);
 
@@ -246,6 +260,7 @@ class HandlerGatewayIntegrationTest {
         verify(orchestrator, never()).execute(any(), anyString(), any());
 
         // 完整流程：PLANNING → ERROR chunk(gateway catch onNext) → AGENT_STATUS(ERROR) → ERROR(onError)
+        awaitUntil(() -> sender.sent.size() >= 4, "应收到 4 条消息");
         assertThat(sender.sent).hasSize(4);
         assertThat((String) sender.sent.get(0).getPayload()).contains("PLANNING");
         assertThat(sender.sent.get(1).getType()).isEqualTo("ERROR");
@@ -256,7 +271,7 @@ class HandlerGatewayIntegrationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void execute_fullChain_quotaExceeded_governanceBlocks() {
+    void execute_fullChain_quotaExceeded_governanceBlocks() throws Exception {
         // 用低配额 gateway 替换
         TokenQuotaService lowQuota = new TokenQuotaService(1);
         GovernanceGateway gateway = new GovernanceGateway(
@@ -270,6 +285,7 @@ class HandlerGatewayIntegrationTest {
 
         verify(orchestrator, never()).execute(any(), anyString(), any());
         // PLANNING → ERROR chunk → AGENT_STATUS(ERROR) → ERROR
+        awaitUntil(() -> sender.sent.size() >= 4, "应收到 4 条消息");
         assertThat(sender.sent).hasSize(4);
         assertThat((String) sender.sent.get(0).getPayload()).contains("PLANNING");
         assertThat(sender.sent.get(1).getType()).isEqualTo("ERROR");
@@ -381,46 +397,6 @@ class HandlerGatewayIntegrationTest {
         Map<String, Object> payload = JsonUtil.fromJson((String) resp.getPayload(), Map.class);
         assertThat(payload.get("content")).isEqualTo("line1\nline2");
         assertThat(payload.get("size")).isEqualTo(11);
-    }
-
-    // ===== 并发 seqId 隔离 =====
-
-    @Test
-    void concurrentSameSeqId_messagesAreSerialized() throws Exception {
-        AtomicInteger running = new AtomicInteger(0);
-        AtomicInteger maxConcurrent = new AtomicInteger(0);
-        CountDownLatch release = new CountDownLatch(1);
-
-        doAnswer(inv -> {
-            int cur = running.incrementAndGet();
-            maxConcurrent.accumulateAndGet(cur, Math::max);
-            release.await(3, TimeUnit.SECONDS);
-            running.decrementAndGet();
-            return null;
-        }).when(orchestrator).execute(any(), anyString(), any());
-
-        // 两条 EXECUTE 同 seqId，应在 SeqLockManager 中串行
-        Thread t1 = Thread.startVirtualThread(() ->
-                router.route(json("EXECUTE", "seq-concurrent",
-                        Map.of("workspaceId", "ws-1", "sessionId", "s-1", "prompt", "a")), sender));
-
-        // 等第一个进入 orchestrator
-        Thread.sleep(200);
-
-        Thread t2 = Thread.startVirtualThread(() ->
-                router.route(json("EXECUTE", "seq-concurrent",
-                        Map.of("workspaceId", "ws-1", "sessionId", "s-1", "prompt", "b")), sender));
-
-        Thread.sleep(200);
-        // 只有一个在执行
-        assertThat(maxConcurrent.get()).isEqualTo(1);
-
-        release.countDown();
-        t1.join(5_000);
-        t2.join(5_000);
-
-        // 第二个也应执行完
-        assertThat(maxConcurrent.get()).isEqualTo(1);
     }
 
     // ===== 未知 type 静默返回 =====

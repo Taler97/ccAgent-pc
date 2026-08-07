@@ -10,6 +10,8 @@ import com.ccagent.presentation.ws.MessageRouter.MessageSender;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 执行控制 Handler：EXECUTE / CANCEL_EXECUTION / ROLLBACK_DIALOG / TOOL_APPROVAL / EXECUTE_PLAN / CANCEL_PLAN
@@ -17,6 +19,8 @@ import java.util.Map;
 public class ExecutionHandler extends HandlerSupport implements WsMessageHandler {
 
     private final OrchestratorPort governanceGateway;
+    /** 执行体异步执行器：handler 快速返回，seqId 锁只持毫秒级（D5：长任务锁外） */
+    private final ExecutorService executionExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public ExecutionHandler(OrchestratorPort governanceGateway) {
         this.governanceGateway = governanceGateway;
@@ -47,33 +51,47 @@ public class ExecutionHandler extends HandlerSupport implements WsMessageHandler
         sendAgentStatus(sender, seqId, "PLANNING", "正在生成执行计划...");
 
         ExecuteRequest request = payloadAs(envelope, ExecuteRequest.class);
-        governanceGateway.executeWithSeqId(request, seqId, new StreamObserver<>() {
-            @Override
-            public void onNext(StreamChunk chunk) {
-                // Plan 就绪即进入"等待用户确认"阶段：补发 WAIT_APPROVAL，让前端
-                // 以 AGENT_STATUS 为唯一状态源派生交互状态，无需自行推断 planPending
-                if ("PLAN_READY".equals(chunk.getType())) {
-                    sendAgentStatus(sender, seqId, "WAIT_APPROVAL", "等待确认执行计划");
-                }
-                sender.send(new Envelope(chunk.getType(), seqId,
-                        Instant.now().toString(), chunk.getContent()));
-            }
+        // 异步提交执行体：handler 快速返回，seqId 锁只持毫秒级（D5：长任务锁外执行）
+        executionExecutor.submit(() -> {
+            try {
+                governanceGateway.executeWithSeqId(request, seqId, new StreamObserver<>() {
+                    @Override
+                    public void onNext(StreamChunk chunk) {
+                        // Plan 就绪即进入"等待用户确认"阶段：补发 WAIT_APPROVAL，让前端
+                        // 以 AGENT_STATUS 为唯一状态源派生交互状态，无需自行推断 planPending
+                        if ("PLAN_READY".equals(chunk.getType())) {
+                            sendAgentStatus(sender, seqId, "WAIT_APPROVAL", "等待确认执行计划");
+                        }
+                        sender.send(new Envelope(chunk.getType(), seqId,
+                                Instant.now().toString(), chunk.getContent()));
+                    }
 
-            @Override
-            public void onError(Throwable error) {
-                sendAgentStatus(sender, seqId, "ERROR", error.getMessage());
+                    @Override
+                    public void onError(Throwable error) {
+                        sendAgentStatus(sender, seqId, "ERROR", error.getMessage());
+                        sender.send(new Envelope("ERROR", seqId,
+                                Instant.now().toString(),
+                                "{\"error\":\"" + safeMsg(error.getMessage()) + "\"}"));
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        sendAgentStatus(sender, seqId, "IDLE", "");
+                        // 不重复发送 EXECUTION_RESULT：SimpleOrchestrator 已通过 onNext 发送带 token 统计的结果消息，
+                        // 此处再发 {"status":"COMPLETED"} 会覆盖云端 conversation 的 token 数据（同 seqId 覆盖保存）
+                    }
+                });
+            } catch (Throwable t) {
+                sendAgentStatus(sender, seqId, "ERROR", t.getMessage());
                 sender.send(new Envelope("ERROR", seqId,
                         Instant.now().toString(),
-                        "{\"error\":\"" + error.getMessage() + "\"}"));
-            }
-
-            @Override
-            public void onComplete() {
-                sendAgentStatus(sender, seqId, "IDLE", "");
-                // 不重复发送 EXECUTION_RESULT：SimpleOrchestrator 已通过 onNext 发送带 token 统计的结果消息，
-                // 此处再发 {"status":"COMPLETED"} 会覆盖云端 conversation 的 token 数据（同 seqId 覆盖保存）
+                        "{\"error\":\"" + safeMsg(t.getMessage()) + "\"}"));
             }
         });
+    }
+
+    private static String safeMsg(String msg) {
+        return msg != null ? msg.replace("\"", "'") : "执行异常";
     }
 
     private void cancel(Envelope envelope, MessageSender sender) {

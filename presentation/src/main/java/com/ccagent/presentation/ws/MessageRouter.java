@@ -11,7 +11,6 @@ import com.ccagent.presentation.ws.handler.*;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.logging.Logger;
 
 /**
@@ -22,16 +21,6 @@ import java.util.logging.Logger;
 public class MessageRouter {
 
     private static final Logger LOG = Logger.getLogger(MessageRouter.class.getName());
-
-    /**
-     * 对话类协作信号：必须能打断 EXECUTE 持有的 seqId 锁（future.get 120s 阻塞），
-     * 不能排队等待同一把锁，否则 APPROVAL_TIMEOUT。
-     * 包含 ROLLBACK_DIALOG — 回滚是 EXECUTE 出错时的逃生通道，不能被锁阻塞。
-     */
-    private static final Set<String> DIALOG_SKIP_LOCK_TYPES = Set.of(
-            "EXECUTE_PLAN", "CANCEL_PLAN", "TOOL_APPROVAL",
-            "CANCEL_EXECUTION", "ROLLBACK_DIALOG"
-    );
 
     private final Map<String, WsMessageHandler> handlerRegistry = new LinkedHashMap<>();
     private final SeqLockManager lockManager = new SeqLockManager();
@@ -97,12 +86,10 @@ public class MessageRouter {
 
     /**
      * 核心路由：按消息类型决定是否加 seqId 锁，然后调用对应 Handler。
-     * <p>锁策略：
+     * <p>锁策略（D5：EXECUTE 已异步提交，seqId 锁只持毫秒级，无需再跳过锁）：
      * <ul>
-     *   <li>对话类协作信号（EXECUTE_PLAN/CANCEL_PLAN/TOOL_APPROVAL/CANCEL_EXECUTION/ROLLBACK_DIALOG）跳过锁，
-     *       必须能打断 EXECUTE 持有的 seqId 锁</li>
-     *   <li>对话类 EXECUTE 加 seqId 锁（保护同 seqId 的执行串行化）</li>
-     *   <li>工具类/控制类消息不加锁（只读/短耗时，避免被 EXECUTE 阻塞 120s）</li>
+     *   <li>对话类消息加 seqId 锁（保护同 seqId 消息串行，锁内代码极短）</li>
+     *   <li>工具/控制/配置类消息不加锁（只读/旁路，避免被对话阻塞）</li>
      * </ul></p>
      */
     public void route(Envelope envelope, MessageSender sender) {
@@ -112,15 +99,11 @@ public class MessageRouter {
             return;
         }
 
-        String type = envelope.getType();
-        if (DIALOG_SKIP_LOCK_TYPES.contains(type)) {
-            // 协作信号：跳过 seqId 锁，必须能打断 EXECUTE 的 future.get(120s) 阻塞
-            handler.handle(envelope, sender);
-        } else if (MessageDispatcher.DIALOG_TYPES.contains(type)) {
-            // 对话类：加 seqId 锁保护执行串行化
+        if (MessageDispatcher.DIALOG_TYPES.contains(envelope.getType())) {
+            // 对话类：加 seqId 锁保护同 seqId 消息串行（handler 快速返回，锁内极短）
             lockManager.withLock(envelope.getSeqId(), () -> handler.handle(envelope, sender));
         } else {
-            // 工具类/控制类：无锁，避免只读查询被 EXECUTE 阻塞
+            // 工具/控制/配置类：无锁，避免只读查询与旁路操作被对话阻塞
             handler.handle(envelope, sender);
         }
     }

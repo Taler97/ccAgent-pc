@@ -41,10 +41,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -186,23 +185,12 @@ class EndToEndIntegrationTest {
         Envelope executeEnvelope = new Envelope(
                 "EXECUTE", "seq-e2e-1", Instant.now().toString(), request);
 
-        // 2. 异步路由（EXECUTE 是同步阻塞调用，放虚拟线程中）
-        CountDownLatch done = new CountDownLatch(1);
-        Thread.startVirtualThread(() -> {
-            try {
-                router.route(JsonUtil.toJson(executeEnvelope), sender);
-            } catch (Exception e) {
-                // 记录异常但不算失败（可能是 stub LLM 返回的 Plan 步骤未真实写文件）
-                e.printStackTrace();
-            } finally {
-                done.countDown();
-            }
-        });
+        // 2. 路由（EXECUTE 已异步提交，route 快速返回，执行在独立虚拟线程）
+        router.route(JsonUtil.toJson(executeEnvelope), sender);
 
-        // 3. 等待完成（最长 30s）
-        assertThat(done.await(30, TimeUnit.SECONDS))
-                .as("全链路执行应在 30s 内完成")
-                .isTrue();
+        // 3. 等待异步执行完成（最长 30s）
+        awaitResult();
+        awaitIdle();
 
         // 4. 验证收到了响应消息
         assertThat(sender.sent)
@@ -268,18 +256,10 @@ class EndToEndIntegrationTest {
         Envelope executeEnvelope = new Envelope(
                 "EXECUTE", "seq-e2e-2", Instant.now().toString(), request);
 
-        CountDownLatch done = new CountDownLatch(1);
-        Thread.startVirtualThread(() -> {
-            try {
-                router.route(JsonUtil.toJson(executeEnvelope), sender);
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                done.countDown();
-            }
-        });
+        router.route(JsonUtil.toJson(executeEnvelope), sender);
 
-        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        awaitResult();
+        awaitIdle();
 
         List<String> types = sender.sent.stream().map(Envelope::getType).toList();
         System.out.println("[E2E-CHAT-TEST] 收到的消息类型序列: " + types);
@@ -351,7 +331,35 @@ class EndToEndIntegrationTest {
     }
 
     static class CapturingSender implements MessageSender {
-        final List<Envelope> sent = new ArrayList<>();
+        final List<Envelope> sent = Collections.synchronizedList(new ArrayList<>());
         public void send(Envelope e) { sent.add(e); }
+    }
+
+    /** 等待异步执行产出 EXECUTION_RESULT（EXECUTE 已异步提交，route 不再同步阻塞） */
+    private void awaitResult() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (System.currentTimeMillis() < deadline) {
+            if (sender.sent.stream().anyMatch(e -> "EXECUTION_RESULT".equals(e.getType()))) return;
+            Thread.sleep(50);
+        }
+        assertThat(sender.sent.stream().anyMatch(e -> "EXECUTION_RESULT".equals(e.getType())))
+                .as("应收到 EXECUTION_RESULT").isTrue();
+    }
+
+    /** 等待最后一条消息为 AGENT_STATUS(IDLE)（onComplete 在 EXECUTION_RESULT 之后发送） */
+    private void awaitIdle() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            if (!sender.sent.isEmpty()
+                    && "AGENT_STATUS".equals(sender.sent.get(sender.sent.size() - 1).getType())
+                    && String.valueOf(sender.sent.get(sender.sent.size() - 1).getPayload()).contains("IDLE")) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        assertThat(!sender.sent.isEmpty()
+                && "AGENT_STATUS".equals(sender.sent.get(sender.sent.size() - 1).getType())
+                && String.valueOf(sender.sent.get(sender.sent.size() - 1).getPayload()).contains("IDLE"))
+                .as("最后一条消息应为 AGENT_STATUS(IDLE)").isTrue();
     }
 }

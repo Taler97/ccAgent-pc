@@ -28,6 +28,8 @@ public enum ErrorCode {
     WORKSPACE_NOT_FOUND("工作区 %s 不存在"),
     /** 会话不存在 */
     SESSION_NOT_FOUND("会话 %s 不存在"),
+    /** 会话忙：同一会话已有任务在执行/等待审批 */
+    SESSION_BUSY("会话忙，已有任务在执行"),
 
     // ========== 审批领域 ==========
     /** 审批超时 */

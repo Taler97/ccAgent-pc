@@ -6,8 +6,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ErrorCodeTest {
 
     @Test
-    void shouldHave15ErrorCodes() {
-        assertThat(ErrorCode.values()).hasSize(15);
+    void shouldHave16ErrorCodes() {
+        assertThat(ErrorCode.values()).hasSize(16);
+        assertThat(ErrorCode.values()).contains(ErrorCode.SESSION_BUSY);
     }
 
     @Test

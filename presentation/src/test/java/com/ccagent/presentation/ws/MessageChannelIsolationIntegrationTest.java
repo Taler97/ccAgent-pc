@@ -32,10 +32,10 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * 消息三通道隔离 + seqId 锁跳过集成测试。
- * <p>验证 P0-#1 修复：三通道隔离（dialogChannel/utilChannel/controlChannel）+ DIALOG_SKIP_LOCK_TYPES 跳过锁。
- * 确保 EXECUTE 持有 seqId 锁阻塞时，PING/CREATE_SESSION 不被阻塞，
- * 且 EXECUTE_PLAN/ROLLBACK_DIALOG 等协作信号能跳过锁打断 EXECUTE。</p>
+ * 消息四通道隔离 + 异步执行集成测试。
+ * <p>验证 P0-#1 修复：四通道隔离（dialogChannel/utilChannel/controlChannel/configChannel）。
+ * EXECUTE 已异步提交（seqId 锁只持毫秒级），PING/CREATE_SESSION/MCP_IMPORT 等均不被对话通道阻塞，
+ * EXECUTE_PLAN 等协作信号无需跳过锁即可 1s 内执行（D5 退役 DIALOG_SKIP_LOCK_TYPES）。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class MessageChannelIsolationIntegrationTest {
@@ -157,12 +157,13 @@ class MessageChannelIsolationIntegrationTest {
     }
 
     /**
-     * EXECUTE 持有 seqId 锁 2s 期间，EXECUTE_PLAN（相同 seqId）应跳过锁立即执行。
-     * 验证 DIALOG_SKIP_LOCK_TYPES 跳过锁机制——协作信号不能被 EXECUTE 锁阻塞。
+     * EXECUTE 异步提交（执行体 sleep 2s，但 handler 已快速返回）后，
+     * EXECUTE_PLAN（相同 seqId）应 1s 内执行——无需 DIALOG_SKIP_LOCK_TYPES 跳过锁。
+     * 验证 D5：异步提交使 seqId 锁只持毫秒级，协作信号不再被长阻塞。
      */
     @Test
-    void executePlanShouldSkipSeqLockAndNotBeBlockedByExecute() throws Exception {
-        // EXECUTE 持锁 2s
+    void executePlanNotBlockedByAsyncExecute() throws Exception {
+        // EXECUTE 执行体 sleep 2s（异步线程，不占 seqId 锁）
         CountDownLatch executeStarted = new CountDownLatch(1);
         doAnswer(inv -> {
             executeStarted.countDown();
@@ -179,24 +180,24 @@ class MessageChannelIsolationIntegrationTest {
 
         MessageSender sender = envelope -> {};
 
-        // 1. 发送 EXECUTE（seqId=seq-1，持锁 2s）
+        // 1. 发送 EXECUTE（seqId=seq-1，执行体 sleep 2s）
         dispatcher.dispatch(toJson(new Envelope("EXECUTE", "seq-1",
                 Instant.now().toString(),
                 new ExecuteRequest("ws", "sess", "test", true))), sender);
 
-        // 2. 等 EXECUTE 开始持锁
+        // 2. 等 EXECUTE 执行体开始
         assertThat(executeStarted.await(1, TimeUnit.SECONDS)).isTrue();
         Thread.sleep(200);
 
-        // 3. 发送 EXECUTE_PLAN（相同 seqId=seq-1，应跳过锁）
+        // 3. 发送 EXECUTE_PLAN（相同 seqId=seq-1）
         long start = System.currentTimeMillis();
         dispatcher.dispatch(toJson(new Envelope("EXECUTE_PLAN", "seq-1",
                 Instant.now().toString(),
                 Map.of("confirmed", "true"))), sender);
 
-        // 4. EXECUTE_PLAN 应在 1s 内执行（跳过 seqId 锁）
+        // 4. EXECUTE_PLAN 应在 1s 内执行（handler 已返回，seqId 锁空闲）
         assertThat(planExecuted.await(1, TimeUnit.SECONDS))
-                .as("EXECUTE_PLAN 应跳过 seqId 锁，不被 EXECUTE 阻塞")
+                .as("EXECUTE_PLAN 不应被 EXECUTE 的异步执行体阻塞")
                 .isTrue();
         long latency = System.currentTimeMillis() - start;
         assertThat(latency)

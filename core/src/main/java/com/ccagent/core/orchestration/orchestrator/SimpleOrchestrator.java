@@ -21,6 +21,7 @@ import com.ccagent.core.orchestration.context.ExecutionContext;
 import com.ccagent.core.orchestration.dispatcher.Dispatcher;
 import com.ccagent.core.orchestration.repository.ExecutionPlanRepository;
 import com.ccagent.core.orchestration.repository.model.PlanRecord;
+import com.ccagent.core.orchestration.state.SessionStateMachine;
 import com.ccagent.core.skill.SkillRegistry;
 import com.ccagent.core.sync.LocalDataRepository;
 import com.ccagent.exception.base.AgentException;
@@ -38,7 +39,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
@@ -59,9 +59,8 @@ public class SimpleOrchestrator {
     /** 黑板 schema (懒加载, 从 classpath 读取 blackboard-schema.yaml) */
     private volatile BlackboardSchema blackboardSchema;
 
-    private final ConcurrentHashMap<String, ReentrantLock> sessionLocks = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, CompletableFuture<Boolean>> approvalFutures = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+    /** 会话状态机：锁只护状态转移（≤1ms），串行性由状态机裁决（D1/D2） */
+    private final SessionStateMachine stateMachine;
     /** seqId → [totalTokens, cachedTokens]，由 LlmCallCompletedEvent 同步累积 */
     private final ConcurrentHashMap<String, long[]> seqTokens = new ConcurrentHashMap<>();
 
@@ -117,6 +116,7 @@ public class SimpleOrchestrator {
         this.artifactStore = artifactStore;
         this.eventBus = eventBus;
         this.skillRegistry = skillRegistry;
+        this.stateMachine = new SessionStateMachine(eventBus);
         // 订阅 LLM 调用完成事件，按 seqId 累积 token（同步订阅，保证保存对话时数据已就绪）
         if (eventBus != null) {
             eventBus.subscribe(LlmCallCompletedEvent.class, event -> {
@@ -158,26 +158,19 @@ public class SimpleOrchestrator {
 
     public void execute(ExecuteRequest request, String seqId, StreamObserver<StreamChunk> observer) {
         String sessionId = request.getSessionId();
-        ReentrantLock lock = sessionLocks.computeIfAbsent(sessionId, k -> new ReentrantLock());
-
-        try {
-            if (!lock.tryLock(10, TimeUnit.SECONDS)) {
-                throw new ToolException(ErrorCode.TOOL_EXECUTION_FAILED, "获取会话锁超时: " + sessionId);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new ToolException(ErrorCode.TOOL_EXECUTION_FAILED, "获取会话锁被中断: " + sessionId, e);
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new WorkspaceException(ErrorCode.SESSION_NOT_FOUND, "sessionId 不能为空");
         }
 
-        try {
-            AtomicBoolean cancelled = new AtomicBoolean(false);
-            cancelFlags.put(seqId, cancelled);
+        // 会话准入：瞬时状态转移（锁内极短，≤1ms），忙则拒绝（D1 → SESSION_BUSY）
+        if (!stateMachine.tryBegin(sessionId, seqId)) {
+            throw new ToolException(ErrorCode.SESSION_BUSY, "会话忙，已有任务在执行: " + sessionId);
+        }
+        AtomicBoolean cancelled = stateMachine.getCancelFlag(sessionId);
 
+        try {
             if (request.getWorkspaceId() == null || request.getWorkspaceId().isBlank()) {
                 throw new WorkspaceException(ErrorCode.WORKSPACE_NOT_FOUND, "workspaceId 不能为空");
-            }
-            if (sessionId == null || sessionId.isBlank()) {
-                throw new WorkspaceException(ErrorCode.SESSION_NOT_FOUND, "sessionId 不能为空");
             }
 
             memoryPort.loadStructuredContext(sessionId);
@@ -265,9 +258,10 @@ public class SimpleOrchestrator {
                 LOG.info("[ORCH] PLAN_READY 已发送，等待用户确认: seqId=" + seqId);
 
                 CompletableFuture<Boolean> future = new CompletableFuture<>();
-                approvalFutures.put(seqId, future);
+                stateMachine.markApproval(sessionId, seqId, future);
 
                 try {
+                    // 锁外等待：虚拟线程挂起，不占任何会话锁（四象限 ③ 人工等待）
                     boolean confirmed = future.get(120, TimeUnit.SECONDS);
                     LOG.info("[ORCH] 用户确认结果: seqId=" + seqId + ", confirmed=" + confirmed);
                     if (confirmed && !cancelled.get()) {
@@ -284,22 +278,23 @@ public class SimpleOrchestrator {
                 } catch (ExecutionException e) {
                     throw new ToolException(ErrorCode.TOOL_EXECUTION_FAILED, "审批等待异常", e.getCause());
                 } finally {
-                    approvalFutures.remove(seqId);
+                    stateMachine.clearApproval(sessionId, seqId);
                 }
             }
 
         } catch (AgentException e) {
             LOG.warning("[ORCH] AgentException: seqId=" + seqId + ", code=" + e.getErrorCode() + ", msg=" + e.getMessage());
+            stateMachine.markError(sessionId, seqId);
             observer.onNext(new StreamChunk(seqId, "ERROR",
                     "{\"errorCode\":\"" + e.getErrorCode().name()
                             + "\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}", null));
             observer.onError(e);
         } catch (Exception e) {
             LOG.warning("[ORCH] 未预期异常: seqId=" + seqId + ", msg=" + e.getMessage() + ", cause=" + e.getCause());
+            stateMachine.markError(sessionId, seqId);
             observer.onError(e);
         } finally {
-            cancelFlags.remove(seqId);
-            lock.unlock();
+            stateMachine.finish(sessionId, seqId);
         }
     }
 
@@ -456,7 +451,13 @@ public class SimpleOrchestrator {
                 return true;
             }
 
-            AtomicBoolean cancelled = new AtomicBoolean(false);
+            // 恢复期间置会话忙，避免并发 EXECUTE 干扰恢复（会话状态机兜底）
+            if (!stateMachine.tryBegin(sessionId, recoveryKey)) {
+                LOG.warning("恢复失败：会话忙，跳过恢复 sessionId=" + sessionId);
+                task.close();
+                return false;
+            }
+            AtomicBoolean cancelled = stateMachine.getCancelFlag(sessionId);
             StreamObserver<StreamChunk> noopObserver = new StreamObserver<>() {
                 @Override public void onNext(StreamChunk chunk) {}
                 @Override public void onError(Throwable error) {}
@@ -472,6 +473,7 @@ public class SimpleOrchestrator {
                         workspaceRoot, cancelled, noopObserver, task, skipIds);
             } finally {
                 task.close();
+                stateMachine.finish(sessionId, recoveryKey);
             }
             return true;
         } catch (Exception e) {
@@ -530,15 +532,10 @@ public class SimpleOrchestrator {
     }
 
     public void confirmPlan(String seqId, boolean confirmed) {
-        CompletableFuture<Boolean> future = approvalFutures.get(seqId);
-        if (future != null) future.complete(confirmed);
+        stateMachine.confirmApproval(seqId, confirmed);
     }
 
     public boolean cancelExecution(String seqId) {
-        AtomicBoolean flag = cancelFlags.get(seqId);
-        if (flag != null) { flag.set(true); return true; }
-        CompletableFuture<Boolean> future = approvalFutures.get(seqId);
-        if (future != null) { future.complete(false); return true; }
-        return false;
+        return stateMachine.requestCancel(seqId);
     }
 }

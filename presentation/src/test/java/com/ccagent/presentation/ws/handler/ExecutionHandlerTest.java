@@ -13,8 +13,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -34,8 +37,18 @@ class ExecutionHandlerTest {
     @Mock OrchestratorPort gateway;
 
     static class CapturingSender implements MessageSender {
-        final List<Envelope> sent = new ArrayList<>();
+        final List<Envelope> sent = Collections.synchronizedList(new ArrayList<>());
         public void send(Envelope e) { sent.add(e); }
+    }
+
+    /** 轮询等待异步消息到达（EXECUTE 已异步提交，handler 返回后消息由执行线程产出） */
+    private static void awaitUntil(BooleanSupplier cond, String msg) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            if (cond.getAsBoolean()) return;
+            Thread.sleep(20);
+        }
+        assertThat(cond.getAsBoolean()).as(msg).isTrue();
     }
 
     private Envelope env(String type, String seqId, Object payload) {
@@ -57,18 +70,19 @@ class ExecutionHandlerTest {
                 Map.of("prompt", "hello", "sessionId", "s-1"));
         handler.handle(envelope, sender);
 
-        // 应先发 AGENT_STATUS(PLANNING)
+        // 应先发 AGENT_STATUS(PLANNING)（同步，handler 返回前发出）
         assertThat(sender.sent).hasSize(1);
         assertThat(sender.sent.get(0).getType()).isEqualTo("AGENT_STATUS");
         String payload = (String) sender.sent.get(0).getPayload();
         assertThat(payload).contains("PLANNING");
 
-        verify(gateway).executeWithSeqId(any(ExecuteRequest.class), eq("seq-1"), any());
+        // 执行体异步提交：gateway 在 1s 内被调用（seqId 锁只持毫秒级）
+        verify(gateway, timeout(1000)).executeWithSeqId(any(ExecuteRequest.class), eq("seq-1"), any());
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void executeStreamOnNextForwardsChunk() {
+    void executeStreamOnNextForwardsChunk() throws Exception {
         ExecutionHandler handler = new ExecutionHandler(gateway);
 
         // 捕获 observer 并触发 onNext
@@ -83,8 +97,9 @@ class ExecutionHandlerTest {
         CapturingSender sender = new CapturingSender();
         handler.handle(env("EXECUTE", "seq-1", Map.of("prompt", "hi", "sessionId", "s-1")), sender);
 
+        // 等待异步执行线程产出消息（异步提交后消息由执行线程发送）
+        awaitUntil(() -> sender.sent.size() >= 2, "应转发 STEP_CHUNK");
         // 第一条是 AGENT_STATUS(PLANNING)，第二条是转发的 STEP_CHUNK
-        assertThat(sender.sent).hasSizeGreaterThanOrEqualTo(2);
         Envelope chunkEnv = sender.sent.get(1);
         assertThat(chunkEnv.getType()).isEqualTo("STEP_CHUNK");
         assertThat(chunkEnv.getSeqId()).isEqualTo("seq-1");
@@ -93,7 +108,7 @@ class ExecutionHandlerTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void executeStreamOnCompleteSendsIdleOnly() {
+    void executeStreamOnCompleteSendsIdleOnly() throws Exception {
         ExecutionHandler handler = new ExecutionHandler(gateway);
 
         doAnswer(inv -> {
@@ -107,15 +122,14 @@ class ExecutionHandlerTest {
 
         // AGENT_STATUS(PLANNING) → AGENT_STATUS(IDLE)
         // EXECUTION_RESULT 由 SimpleOrchestrator 通过 onNext 发送（携带 token 统计），onComplete 不再重复发送
-        assertThat(sender.sent).hasSize(2);
-        assertThat((String) sender.sent.get(0).getPayload()).contains("PLANNING");
+        awaitUntil(() -> sender.sent.size() >= 2, "应收到 IDLE");
         assertThat(sender.sent.get(1).getType()).isEqualTo("AGENT_STATUS");
         assertThat((String) sender.sent.get(1).getPayload()).contains("IDLE");
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void executeStreamOnNextPlanReadySendsWaitApproval() {
+    void executeStreamOnNextPlanReadySendsWaitApproval() throws Exception {
         ExecutionHandler handler = new ExecutionHandler(gateway);
 
         // 捕获 observer 并触发 PLAN_READY（模拟 SimpleOrchestrator 非 autoMode 下发计划）
@@ -132,7 +146,7 @@ class ExecutionHandlerTest {
         handler.handle(env("EXECUTE", "seq-1", Map.of("prompt", "hi", "sessionId", "s-1")), sender);
 
         // AGENT_STATUS(PLANNING) → AGENT_STATUS(WAIT_APPROVAL) → PLAN_READY
-        assertThat(sender.sent).hasSize(3);
+        awaitUntil(() -> sender.sent.size() >= 3, "应收到 PLAN_READY");
         assertThat(sender.sent.get(0).getType()).isEqualTo("AGENT_STATUS");
         assertThat((String) sender.sent.get(0).getPayload()).contains("PLANNING");
         assertThat(sender.sent.get(1).getType()).isEqualTo("AGENT_STATUS");
@@ -142,7 +156,7 @@ class ExecutionHandlerTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void executeStreamOnErrorSendsError() {
+    void executeStreamOnErrorSendsError() throws Exception {
         ExecutionHandler handler = new ExecutionHandler(gateway);
 
         doAnswer(inv -> {
@@ -155,7 +169,8 @@ class ExecutionHandlerTest {
         handler.handle(env("EXECUTE", "seq-1", Map.of("prompt", "hi", "sessionId", "s-1")), sender);
 
         // AGENT_STATUS(PLANNING) → AGENT_STATUS(ERROR) → ERROR
-        assertThat(sender.sent).hasSizeGreaterThanOrEqualTo(2);
+        awaitUntil(() -> !sender.sent.isEmpty()
+                && "ERROR".equals(sender.sent.get(sender.sent.size() - 1).getType()), "应收到 ERROR");
         assertThat((String) sender.sent.get(1).getPayload()).contains("ERROR");
         // 最后一条应该是 ERROR envelope
         Envelope last = sender.sent.get(sender.sent.size() - 1);
