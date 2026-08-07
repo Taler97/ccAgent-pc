@@ -191,4 +191,34 @@ class ChatAgentTest {
         assertThat(result.isReply()).isTrue();
         assertThat(result.getReplyContent()).isEqualTo("ok");
     }
+
+    // ==================== 外部 system prompt ====================
+
+    @Test
+    void shouldUseConfiguredSystemPrompt() {
+        mockMemory("", List.of());
+        when(llmPort.chat(any())).thenReturn(
+                new ChatResponse("{\"type\":\"chat\",\"content\":\"ok\"}", null, 10, 0, "stop"));
+
+        new ChatAgent(llmPort, memoryPort, "自定义系统提示词").chat("s1", "w1", "x", null);
+
+        ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(llmPort).chat(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt()).isEqualTo("自定义系统提示词");
+    }
+
+    @Test
+    void shouldFallBackToDefaultSystemPromptWhenConfiguredBlank() {
+        mockMemory("", List.of());
+        when(llmPort.chat(any())).thenReturn(
+                new ChatResponse("{\"type\":\"chat\",\"content\":\"ok\"}", null, 10, 0, "stop"));
+
+        new ChatAgent(llmPort, memoryPort, "  ").chat("s1", "w1", "x", null);
+
+        ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(llmPort).chat(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .startsWith("你是一个智能助手")
+                .contains("{\"type\": \"plan\", \"task\": \"用户任务的详细描述\"}");
+    }
 }

@@ -30,10 +30,21 @@ public class ChatAgent {
 
     private final LlmPort llmPort;
     private final MemoryPort memoryPort;
+    private final String systemPrompt;
 
     public ChatAgent(LlmPort llmPort, MemoryPort memoryPort) {
+        this(llmPort, memoryPort, null);
+    }
+
+    /**
+     * @param systemPrompt 外部配置的主 Agent system prompt；
+     *                     null / 空白时回退到内置默认 {@link #DEFAULT_SYSTEM_PROMPT}
+     */
+    public ChatAgent(LlmPort llmPort, MemoryPort memoryPort, String systemPrompt) {
         this.llmPort = llmPort;
         this.memoryPort = memoryPort;
+        this.systemPrompt = (systemPrompt == null || systemPrompt.isBlank())
+                ? DEFAULT_SYSTEM_PROMPT : systemPrompt;
     }
 
     /**
@@ -73,7 +84,7 @@ public class ChatAgent {
         String prompt = buildPrompt(memorySummary, userPrompt);
 
         ChatRequest request = new ChatRequest(
-                SYSTEM_PROMPT,
+                systemPrompt,
                 prompt,
                 List.of(),
                 false,
@@ -161,7 +172,10 @@ public class ChatAgent {
         return sb.toString();
     }
 
-    private static final String SYSTEM_PROMPT = ""
+    /**
+     * 内置默认 system prompt（未在 ccagent.yaml 配置 {@code agent.system-prompt} 时使用）
+     */
+    private static final String DEFAULT_SYSTEM_PROMPT = ""
             + "你是一个智能助手，负责处理用户的请求。请严格按以下规则判断并输出固定格式的 JSON。\n\n"
             + "**需要规划执行的情况**（输出 type 为 plan）：\n"
             + "- 需要修改代码、创建文件、编辑文件\n"

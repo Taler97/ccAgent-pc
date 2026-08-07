@@ -19,6 +19,7 @@ import com.ccagent.core.orchestration.orchestrator.SimpleOrchestrator;
 import com.ccagent.core.orchestration.progress.ProgressStore;
 import com.ccagent.core.orchestration.repository.ExecutionPlanRepository;
 import com.ccagent.core.sync.LocalDataRepository;
+import com.ccagent.infrastructure.config.AppConfig;
 import com.ccagent.kernel.event.EventBus;
 
 import javax.sql.DataSource;
@@ -44,7 +45,7 @@ public class OrchestrationModule {
             EventBus eventBus) {
         init(dataSource, proxyLlm, memoryPort, expertRegistry, rollbackManager,
                 tokenQuotaService, tokenStatsService, policyEnforcer, planSanitizer,
-                auditor, localDataRepo, eventBus, null);
+                auditor, localDataRepo, eventBus, null, null);
     }
 
     public void init(
@@ -61,11 +62,32 @@ public class OrchestrationModule {
             LocalDataRepository localDataRepo,
             EventBus eventBus,
             SkillRegistry skillRegistry) {
+        init(dataSource, proxyLlm, memoryPort, expertRegistry, rollbackManager,
+                tokenQuotaService, tokenStatsService, policyEnforcer, planSanitizer,
+                auditor, localDataRepo, eventBus, skillRegistry, null);
+    }
+
+    public void init(
+            DataSource dataSource,
+            LlmPort proxyLlm,
+            MemoryPort memoryPort,
+            ExpertRegistryPort expertRegistry,
+            RollbackManager rollbackManager,
+            TokenQuotaService tokenQuotaService,
+            TokenStatsService tokenStatsService,
+            PolicyEnforcer policyEnforcer,
+            PlanSanitizer planSanitizer,
+            Auditor auditor,
+            LocalDataRepository localDataRepo,
+            EventBus eventBus,
+            SkillRegistry skillRegistry,
+            AppConfig config) {
 
         ExecutionPlanRepository planRepo = new ExecutionPlanRepository(dataSource);
 
         ProgressStore progressStore = new ProgressStore();
-        ChatAgent chatAgent = new ChatAgent(proxyLlm, memoryPort);
+        String systemPrompt = (config != null) ? config.getAgent().getSystemPrompt() : null;
+        ChatAgent chatAgent = new ChatAgent(proxyLlm, memoryPort, systemPrompt);
         ArtifactStore artifactStore = new FileArtifactStore();
         Dispatcher dispatcher = new Dispatcher(expertRegistry, planRepo, artifactStore, eventBus, progressStore);
         SimpleOrchestrator orchestrator = new SimpleOrchestrator(

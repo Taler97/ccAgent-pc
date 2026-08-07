@@ -19,6 +19,7 @@ public class AppConfig {
     private SyncConfig sync = new SyncConfig();
     private CliConfig cli = new CliConfig();
     private HttpConfig http = new HttpConfig();
+    private AgentConfig agent = new AgentConfig();
 
     // ====== 分组配置 ======
 
@@ -248,4 +249,19 @@ public class AppConfig {
         public int getPort() { return port; }
         public void setPort(int port) { this.port = port; }
     }
+
+    /**
+     * 主对话 Agent 配置
+     * <p>{@code systemPrompt} 为空时由 ChatAgent 回退到内置默认提示词，行为不变；
+     * 在 ccagent.yaml 中配置 {@code agent.system-prompt} 可整体替换主 Agent 的 system prompt。</p>
+     */
+    public static class AgentConfig {
+        private String systemPrompt = "";
+
+        public String getSystemPrompt() { return systemPrompt; }
+        public void setSystemPrompt(String systemPrompt) { this.systemPrompt = systemPrompt; }
+    }
+
+    public AgentConfig getAgent() { return agent; }
+    public void setAgent(AgentConfig agent) { this.agent = agent; }
 }

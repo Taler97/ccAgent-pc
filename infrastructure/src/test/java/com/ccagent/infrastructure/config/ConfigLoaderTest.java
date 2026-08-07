@@ -75,4 +75,35 @@ class ConfigLoaderTest {
         assertThat(config.getLlm().getApiKey()).isEqualTo("sk-fallback");
         assertThat(config.getLlm().getModel()).isEqualTo("deepseek-v4-flash");
     }
+
+    // ===== agent.system-prompt 外部化 =====
+
+    @Test
+    void shouldLoadAgentSystemPromptFromYaml(@TempDir Path tempDir) throws Exception {
+        Path configFile = tempDir.resolve("config.yaml");
+        Files.writeString(configFile, """
+                agent:
+                  system-prompt: |-
+                    你是一个智能助手，负责处理用户的请求。
+
+                    ## 输出格式（必须严格遵循）
+                    ```json
+                    {"type": "plan", "task": "用户任务的详细描述"}
+
+                    {"type": "chat", "content": "你的回复内容"}
+                    ```
+                """);
+        AppConfig config = ConfigLoader.load(configFile.toString());
+        assertThat(config.getAgent().getSystemPrompt())
+                .startsWith("你是一个智能助手")
+                .contains("## 输出格式")
+                .contains("{\"type\": \"plan\", \"task\": \"用户任务的详细描述\"}");
+    }
+
+    @Test
+    void shouldDefaultAgentSystemPromptEmptyWhenNotConfigured() {
+        AppConfig config = ConfigLoader.load("/nonexistent/config.yaml");
+        assertThat(config.getAgent()).isNotNull();
+        assertThat(config.getAgent().getSystemPrompt()).isEmpty();
+    }
 }

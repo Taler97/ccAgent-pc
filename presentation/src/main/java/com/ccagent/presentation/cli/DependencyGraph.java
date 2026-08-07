@@ -142,7 +142,8 @@ public class DependencyGraph {
                 governanceModule.getAuditor(),
                 syncModule.getLocalDataRepository(),
                 governanceModule.getEventBus(),
-                skillRegistry
+                skillRegistry,
+                config
         );
 
         // 热插拔：治理监听器重载后，原子替换 GovernanceGateway 的引用
