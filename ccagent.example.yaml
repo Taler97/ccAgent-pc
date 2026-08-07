@@ -1,0 +1,67 @@
+# ccAgent 配置模板（可提交版本）
+#
+# 用法：复制本文件为 ccagent.yaml（被 .gitignore 排除、不会误提交）后启动 PC 引擎。
+# 本模板所有敏感项（API Key、前后端地址）均通过环境变量占位符 ${VAR} 或 ${VAR:默认值} 注入，
+# 由 ConfigLoader 在启动时解析，避免密钥落盘；其余非敏感项直接给出默认值。
+#
+# 占位符语法：
+#   ${VAR}          → 取环境变量 VAR；未设置则为空字符串
+#   ${VAR:default}  → 取环境变量 VAR；未设置则回退 default
+# 示例：export DEEPSEEK_API_KEY=sk-xxx 后再启动，llm.api-key 即为 sk-xxx。
+#
+# 提示：虚拟线程（Java 21）无需配置线程池大小；DAG 批次内并行由虚拟线程池无界承载，
+# 因此模板不含线程池/并行数配置项——如需限制可后续在 Dispatcher 增加参数，此处留白。
+
+auth:
+  # Cloud 服务器 API Key（与云端 app.api-key 一致）
+  api-key: "${CCAGENT_CLOUD_API_KEY:Qse2ffed}"
+  # 代码工作区目录（用正斜杠 / 或双反斜杠 \\）
+  workspace-dir: "${CCAGENT_WORKSPACE_DIR:}"
+
+llm:
+  # DeepSeek API Key（敏感，建议用环境变量注入）
+  api-key: "${DEEPSEEK_API_KEY:}"
+  # 模型名
+  model: "deepseek-v4-flash"
+  # API 端点（DeepSeek 官方）
+  base-url: "https://api.deepseek.com"
+  # 流式调用超时（秒）
+  timeout-streaming: 60
+  # 同步调用超时（秒）
+  timeout-sync: 30
+  # DeepSeek 思考模式开关（true 时 PC 端产出 THINKING_CHUNK 思考链，前端折叠展示）
+  thinking-enabled: false
+  # 思考强度：high / max
+  reasoning-effort: "high"
+
+websocket:
+  # 云端 WebSocket 地址（生产示例：ws://118.31.169.93:28080/ws；本地开发：ws://localhost:8080/ws）
+  url: "${CCAGENT_WS_URL:ws://localhost:8080/ws}"
+  # 心跳间隔（秒）
+  heartbeat-interval: 30
+  # 心跳超时（秒）
+  heartbeat-timeout: 10
+  # 断线重连初始延迟（秒）
+  reconnect-initial-delay: 1
+  # 断线重连最大延迟（秒，指数退避上限）
+  reconnect-max-delay: 60
+
+# 数据同步配置（token 统计 / 会话历史上传云端）
+sync:
+  enabled: true
+  # 云端 HTTP 地址（生产示例：http://118.31.169.93:28080；本地开发：http://localhost:8080）
+  cloud-url: "${CCAGENT_CLOUD_URL:http://localhost:8080}"
+  api-key: "${CCAGENT_CLOUD_API_KEY:Qse2ffed}"
+  # 自动同步间隔（分钟）
+  interval-minutes: 5
+  auto-sync: true
+
+# CLI 交互模式配置
+cli:
+  prompt: "ccAgent> "
+  stream-output: true
+  color-enabled: true
+
+# HTTP 服务配置（--http 模式下有效）
+http:
+  port: 3000
