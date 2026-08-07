@@ -1,6 +1,8 @@
 # 会话并发模型（concurrency-model）
 
 > 本文档是会话并发改造的**规范与决策记录**，覆盖"通道 / 锁 / 串行性"三层规约、四象限分类、现状对照与改造范围。所有架构决策（D1-D7）已确认，改动按阶段落地。
+>
+> **实施状态（已完成）**：阶段 1（configChannel）与阶段 2+3（会话状态机 + 锁瘦身）已落地并通过全量回归；阶段 4（前端 `SESSION_BUSY` 适配 + 本文档最终态）完成。云端无需代码改动——`SESSION_BUSY` 作为 ERROR envelope 经现有 `PcWebSocketHandler` 的 ERROR 分支透传。
 
 ## 0. 背景与问题
 
@@ -68,19 +70,20 @@
 
 ## 7. 改造范围（按阶段）
 
-### 阶段 1 · configChannel（独立交付，低风险）
+### 阶段 1 · configChannel（✅ 已完成）
 - `MessageDispatcher`：新增 `CONFIG_TYPES` + `configChannel` 执行器 + `shutdown()`。
 - 收录：`UPDATE_LLM_CONFIG` / `QUERY_LLM_CONFIG` / `MCP_IMPORT_REQ`（写/导入）；`MCP_STATUS_REQ` / `SKILL_LIST_REQ` 保留 utilChannel（只读查询）。
-- 测试：`MessageChannelIsolationIntegrationTest` 扩展。
+- 测试：`MessageChannelIsolationIntegrationTest` 扩展（`mcpImportShouldNotBeBlockedByExecuteLock`）。
 
-### 阶段 2+3 · 会话锁瘦身 + 事件驱动状态机（合并交付，核心）
-- 新增：`SessionState` / `SessionStateMachine`（EventBus 监听 + `transition`）、`SessionStateChangedEvent`、`SESSION_BUSY` 错误码。
-- 改造：`SimpleOrchestrator.execute`（tryBegin → 锁外流水线 → finish）、`ExecutionHandler`（异步提交 + cancel/rollback 走状态机）、`MessageRouter`（退役 skip-lock）、`GovernanceGateway`（适配异步）、`ExecutionContextHolder` 迁移传播。
-- 前端：`useChat.js` 识别 `SESSION_BUSY`；云端：`ExecuteController` 透传。
+### 阶段 2+3 · 会话锁瘦身 + 事件驱动状态机（✅ 已完成）
+- 新增：`SessionStateMachine`（`core/orchestration/state`）、`SessionStateChangedEvent`、`SESSION_BUSY` 错误码。
+- 改造：`SimpleOrchestrator.execute`（`tryBegin` 瞬时准入 → 锁外流水线 → `finish`）、`ExecutionHandler`（EXECUTE 异步提交）、`MessageRouter`（退役 `DIALOG_SKIP_LOCK_TYPES`）、`GovernanceGateway` 无需改动（`executeWithSeqId` 原样适配异步）。
+- 前端：`useChat.js` 识别 `SESSION_BUSY`（提示"会话忙"并恢复 idle）。
+- 测试：`SessionStateMachineTest`、`SimpleOrchestratorTest`（忙拒绝）、异步化改造后的 Handler/E2E/隔离测试。
 
-### 阶段 4 · 回归与文档
-- 全量回归：审批、取消、回滚、断点续存；新增并发测试（同会话双 EXECUTE、审批中断、取消竞态、状态机转移表）。
-- 本文档随改造同步更新为最终态。
+### 阶段 4 · 回归与文档（✅ 已完成）
+- 全量回归：`mvn test -DexcludedGroups=real-llm` 通过（审批/取消/回滚/断点续存/并发）。
+- 本文档已更新为最终态。
 
 ## 8. 风险与对策
 
