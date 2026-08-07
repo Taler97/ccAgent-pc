@@ -1,5 +1,6 @@
 package com.ccagent.presentation.ws;
 
+import com.ccagent.adapter.llm.DeepSeekLlmAdapter;
 import com.ccagent.api.port.OrchestratorPort;
 import com.ccagent.core.skill.SkillRegistry;
 import com.ccagent.plugin.tools.mcp.McpClientManager;
@@ -25,24 +26,34 @@ public class CloudWsSession {
     private volatile boolean started = false;
 
     public CloudWsSession(AppConfig config, OrchestratorPort gateway) {
-        this(config, gateway, null, null);
+        this(config, gateway, null, null, null, null);
     }
 
     public CloudWsSession(AppConfig config, OrchestratorPort gateway, SkillRegistry skillRegistry) {
-        this(config, gateway, skillRegistry, null);
+        this(config, gateway, skillRegistry, null, null, null);
     }
 
     public CloudWsSession(AppConfig config, OrchestratorPort gateway, SkillRegistry skillRegistry,
                           McpClientManager mcpManager) {
+        this(config, gateway, skillRegistry, mcpManager, null, null);
+    }
+
+    /**
+     * 完整构造函数：注入 LLM 适配器与 AppConfig 以启用 UPDATE_LLM_CONFIG 热更。
+     */
+    public CloudWsSession(AppConfig config, OrchestratorPort gateway, SkillRegistry skillRegistry,
+                          McpClientManager mcpManager,
+                          DeepSeekLlmAdapter llmAdapter, AppConfig appConfig) {
         this.cloudUrl = config.getWebsocket().getUrl();
         this.stateManager = new StateManager();
         this.reconnectManager = new ReconnectManager(
                 config.getWebsocket().getReconnectInitialDelay(),
                 config.getWebsocket().getReconnectMaxDelay()
         );
-        MessageRouter router = new MessageRouter(gateway, skillRegistry, mcpManager);
+        MessageRouter router = new MessageRouter(gateway, skillRegistry, mcpManager, llmAdapter, appConfig);
+        MessageDispatcher dispatcher = new MessageDispatcher(router);
         this.wsClient = new CloudWebSocketClient(
-                this.cloudUrl, router, stateManager, reconnectManager
+                this.cloudUrl, dispatcher, stateManager, reconnectManager
         );
     }
 

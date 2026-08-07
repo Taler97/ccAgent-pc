@@ -96,22 +96,35 @@ public class RollbackManager implements ListenerExtensionPoint {
 
     public void registerOnEventBus(EventBus eventBus) {
         subscriptions.add(eventBus.subscribe(PlanExecutionStartedEvent.class, event -> {
-            // 整批备份在 Plan 执行前一次性完成，后续步骤事件不再重复 IO
-            prepareBackup(event.getSeqId(), event.getPlan(), event.getWorkspaceRoot());
+            try {
+                // 整批备份在 Plan 执行前一次性完成，后续步骤事件不再重复 IO
+                prepareBackup(event.getSeqId(), event.getPlan(), event.getWorkspaceRoot());
+            } catch (Exception e) {
+                // 备份失败不应阻塞主流程，仅记录日志
+                System.err.println("[ROLLBACK] prepareBackup 异常: " + e.getMessage());
+            }
         }));
         subscriptions.add(eventBus.subscribe(StepStartedEvent.class, event -> {
-            // 若整批备份已覆盖该步骤则零 IO 跳过，仅兼容未走整批备份的调用路径
-            if (!isStepBackedUp(event.getSeqId(), event.getStepId())) {
-                prepareStepBackup(event.getSeqId(), event.getStepId(), event.getAffectedFiles());
+            try {
+                // 若整批备份已覆盖该步骤则零 IO 跳过，仅兼容未走整批备份的调用路径
+                if (!isStepBackedUp(event.getSeqId(), event.getStepId())) {
+                    prepareStepBackup(event.getSeqId(), event.getStepId(), event.getAffectedFiles());
+                }
+            } catch (Exception e) {
+                System.err.println("[ROLLBACK] prepareStepBackup 异常: " + e.getMessage());
             }
         }));
         subscriptions.add(eventBus.subscribe(StepFailedEvent.class, event -> {
-            // 会话级回滚：任一步骤失败即整批还原（restoreAll 幂等，批次内多个失败重复触发无害）
-            boolean restored = restoreAll(event.getSeqId());
-            if (restored) {
-                eventBus.publish(new StepRolledBackEvent(
-                        event.getSeqId(), event.getSessionId(), event.getStepId(),
-                        event.getTotalSteps(), event.getExpertName(), event.getAffectedFiles()));
+            try {
+                // 会话级回滚：任一步骤失败即整批还原（restoreAll 幂等，批次内多个失败重复触发无害）
+                boolean restored = restoreAll(event.getSeqId());
+                if (restored) {
+                    eventBus.publish(new StepRolledBackEvent(
+                            event.getSeqId(), event.getSessionId(), event.getStepId(),
+                            event.getTotalSteps(), event.getExpertName(), event.getAffectedFiles()));
+                }
+            } catch (Exception e) {
+                System.err.println("[ROLLBACK] restoreAll 异常: " + e.getMessage());
             }
         }));
     }
@@ -127,6 +140,7 @@ public class RollbackManager implements ListenerExtensionPoint {
      * 为 Plan 准备备份（执行前调用）
      * <p>按 rollbackProvider 选择备份策略：git 仓库用 git 检查点，否则文件快照。
      * 两者都记录受影响文件所属步骤（供兼容路径的步骤级判断），git 检查点为会话级。</p>
+     * <p>备份失败不应阻塞主流程，所有异常在此处捕获并记录。</p>
      *
      * @param seqId         消息序列号
      * @param plan          执行计划
@@ -138,10 +152,15 @@ public class RollbackManager implements ListenerExtensionPoint {
         List<String> allAffected = collectAffectedFiles(plan);
         if (allAffected.isEmpty()) return;
 
-        if (useGit(workspaceRoot) && createGitCheckpoint(seqId, allAffected, workspaceRoot)) {
-            return;
+        try {
+            if (useGit(workspaceRoot) && createGitCheckpoint(seqId, allAffected, workspaceRoot)) {
+                return;
+            }
+            snapshotBackup(seqId, plan);
+        } catch (Exception e) {
+            // 备份失败不应阻塞主流程，仅记录日志
+            System.err.println("[ROLLBACK] prepareBackup 失败: seqId=" + seqId + ", error=" + e.getMessage());
         }
-        snapshotBackup(seqId, plan);
     }
 
     private List<String> collectAffectedFiles(Plan plan) {
@@ -165,6 +184,9 @@ public class RollbackManager implements ListenerExtensionPoint {
     private void snapshotBackup(String seqId, Plan plan) {
         BackupManifest manifest = new BackupManifest(seqId);
         String stagingDir = Constants.STAGING_DIR + "/" + seqId;
+
+        // 确保 staging 目录存在
+        FileUtil.createDirectories(Paths.get(stagingDir));
 
         // 收集所有受影响文件：filePath -> 影响它的步骤 ID 列表（按步骤顺序）
         Map<String, List<Integer>> filesByStep = new LinkedHashMap<>();

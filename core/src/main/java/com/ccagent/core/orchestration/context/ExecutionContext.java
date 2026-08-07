@@ -18,6 +18,8 @@ public class ExecutionContext {
     private String sessionId;
     private String workspaceRoot;
     private String seqId;
+    /** 会话级 skills 合并后的 prompt（模式 A：会话启用的技能注入） */
+    private String skillsPrompt;
 
     public ExecutionContext() {}
 
@@ -36,4 +38,6 @@ public class ExecutionContext {
     public void setWorkspaceRoot(String workspaceRoot) { this.workspaceRoot = workspaceRoot; }
     public String getSeqId() { return seqId; }
     public void setSeqId(String seqId) { this.seqId = seqId; }
+    public String getSkillsPrompt() { return skillsPrompt; }
+    public void setSkillsPrompt(String skillsPrompt) { this.skillsPrompt = skillsPrompt; }
 }

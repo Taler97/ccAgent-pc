@@ -12,6 +12,13 @@ import java.util.List;
 public interface ExpertRegistryPort {
 
     /**
+     * 注册专家实例
+     *
+     * @param expert 专家实例
+     */
+    void register(Expert expert);
+
+    /**
      * 获取专家实例
      *
      * @param expertName 专家名称

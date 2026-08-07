@@ -35,22 +35,44 @@ public class DeepSeekLlmAdapter implements LlmPort {
     private final String model;
     private final int timeoutStreaming;
 
+    // 思考模式配置（支持运行时热更）
+    private volatile boolean thinkingEnabled;
+    private volatile String reasoningEffort;
+
     private final ConcurrentHashMap<String, CompletableFuture<?>> requestFutures = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Thread> requestThreads = new ConcurrentHashMap<>();
 
     public DeepSeekLlmAdapter(String apiKey, String baseUrl, String model) {
-        this(apiKey, baseUrl, model, 60);
+        this(apiKey, baseUrl, model, 60, false, "high");
     }
 
     public DeepSeekLlmAdapter(String apiKey, String baseUrl, String model, int timeoutStreaming) {
+        this(apiKey, baseUrl, model, timeoutStreaming, false, "high");
+    }
+
+    public DeepSeekLlmAdapter(String apiKey, String baseUrl, String model, int timeoutStreaming,
+                              boolean thinkingEnabled, String reasoningEffort) {
         this.apiKey = apiKey;
         this.baseUrl = baseUrl;
         this.model = model;
         this.timeoutStreaming = timeoutStreaming;
+        this.thinkingEnabled = thinkingEnabled;
+        this.reasoningEffort = reasoningEffort != null && !reasoningEffort.isBlank() ? reasoningEffort : "high";
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
                 .build();
     }
+
+    /**
+     * 热更思考模式配置（由 ConfigHandler 调用，免重启生效）
+     */
+    public void updateThinkingConfig(boolean enabled, String effort) {
+        this.thinkingEnabled = enabled;
+        this.reasoningEffort = (effort != null && !effort.isBlank()) ? effort : "high";
+    }
+
+    public boolean isThinkingEnabled() { return thinkingEnabled; }
+    public String getReasoningEffort() { return reasoningEffort; }
 
     @Override
     public ChatResponse chat(ChatRequest request) {
@@ -196,6 +218,8 @@ public class DeepSeekLlmAdapter implements LlmPort {
                             @SuppressWarnings("unchecked")
                             Map<String, Object> delta = (Map<String, Object>) choice.get("delta");
                             String content = delta != null ? (String) delta.get("content") : null;
+                            // 思考模式：读取 reasoning_content 作为思维链内容输出
+                            String reasoningContent = delta != null ? (String) delta.get("reasoning_content") : null;
                             String finishReason = (String) choice.get("finish_reason");
 
                             @SuppressWarnings("unchecked")
@@ -203,6 +227,12 @@ public class DeepSeekLlmAdapter implements LlmPort {
                             if (usage != null) {
                                 totalTokens = ((Number) usage.getOrDefault("total_tokens", 0)).intValue();
                                 cachedTokens = ((Number) usage.getOrDefault("prompt_cache_hit_tokens", 0)).intValue();
+                            }
+
+                            // 思考内容用 THINKING_CHUNK 类型输出，前端可区分展示
+                            if (reasoningContent != null && !reasoningContent.isEmpty()) {
+                                observer.onNext(new StreamChunk(
+                                        requestId, "THINKING_CHUNK", reasoningContent, null));
                             }
 
                             if (content != null && !content.isEmpty()) {
@@ -277,6 +307,11 @@ public class DeepSeekLlmAdapter implements LlmPort {
                 Object toolCalls = history.get("tool_calls");
                 if (toolCalls != null) {
                     msg.put("tool_calls", toolCalls);
+                    // DeepSeek 官方要求：思考模式下进行工具调用的轮次，后续必须完整回传 reasoning_content
+                    Object reasoningContent = history.get("reasoning_content");
+                    if (thinkingEnabled && reasoningContent != null && !String.valueOf(reasoningContent).isBlank()) {
+                        msg.put("reasoning_content", reasoningContent);
+                    }
                 }
                 messages.add(msg);
             }
@@ -289,8 +324,16 @@ public class DeepSeekLlmAdapter implements LlmPort {
         body.put("messages", messages);
         body.put("max_tokens", request.getMaxTokens());
         body.put("stream", stream);
-        if (request.getTemperature() != null) {
-            body.put("temperature", request.getTemperature());
+
+        // 思考模式：思考模式不支持 temperature/top_p 等参数，关闭思考时才传
+        if (thinkingEnabled) {
+            body.put("thinking", Map.of("type", "enabled"));
+            body.put("reasoning_effort", reasoningEffort);
+        } else {
+            body.put("thinking", Map.of("type", "disabled"));
+            if (request.getTemperature() != null) {
+                body.put("temperature", request.getTemperature());
+            }
         }
 
         if (request.isAllowTools() && request.getTools() != null && !request.getTools().isEmpty()) {
@@ -322,6 +365,8 @@ public class DeepSeekLlmAdapter implements LlmPort {
             Map<String, Object> choice = choices.get(0);
             Map<String, Object> message = (Map<String, Object>) choice.get("message");
             String content = message != null ? (String) message.get("content") : null;
+            // 思考模式：读取 reasoning_content（与 content 同级）
+            String reasoningContent = message != null ? (String) message.get("reasoning_content") : null;
             String finishReason = (String) choice.get("finishReason");
             if (finishReason == null) finishReason = (String) choice.get("finish_reason");
 
@@ -348,7 +393,12 @@ public class DeepSeekLlmAdapter implements LlmPort {
                 cachedTokens = ((Number) usage.getOrDefault("prompt_cache_hit_tokens", 0)).intValue();
             }
 
-            return new ChatResponse(content, toolCalls, totalTokens, cachedTokens, finishReason);
+            ChatResponse resp = new ChatResponse(content, toolCalls, totalTokens, cachedTokens, finishReason);
+            // 思考模式：把思维链内容写入 ChatResponse，供调用方在工具调用多轮拼接中回传
+            if (reasoningContent != null && !reasoningContent.isBlank()) {
+                resp.setReasoningContent(reasoningContent);
+            }
+            return resp;
 
         } catch (LlmException e) {
             throw e;

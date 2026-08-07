@@ -1,5 +1,6 @@
 package com.ccagent.infrastructure.config;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -27,6 +28,10 @@ public class AppConfig {
         private int timeoutSync = 30;
         private String model = "deepseek-v4-flash";
         private String baseUrl = "https://api.deepseek.com";
+        // DeepSeek 思考模式：默认关闭，避免工具调用多轮时 reasoning_content 回传问题
+        private boolean thinkingEnabled = false;
+        // 思考强度：high / max
+        private String reasoningEffort = "high";
 
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey; }
@@ -38,6 +43,10 @@ public class AppConfig {
         public void setModel(String model) { this.model = model; }
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+        public boolean isThinkingEnabled() { return thinkingEnabled; }
+        public void setThinkingEnabled(boolean thinkingEnabled) { this.thinkingEnabled = thinkingEnabled; }
+        public String getReasoningEffort() { return reasoningEffort; }
+        public void setReasoningEffort(String reasoningEffort) { this.reasoningEffort = reasoningEffort; }
     }
 
     public static class MemoryConfig {
@@ -105,6 +114,8 @@ public class AppConfig {
         private int eventBufferSize = 1000;
         private int eventFlushIntervalSeconds = 5;
         private int eventRateLimitPerSecond = 0;
+        /** 额外允许访问的目录（工作区之外，路径校验白名单） */
+        private List<String> allowedPaths = new ArrayList<>();
 
         public int getMaxTokensPerSession() { return maxTokensPerSession; }
         public void setMaxTokensPerSession(int maxTokensPerSession) { this.maxTokensPerSession = maxTokensPerSession; }
@@ -144,6 +155,8 @@ public class AppConfig {
         public void setEventFlushIntervalSeconds(int eventFlushIntervalSeconds) { this.eventFlushIntervalSeconds = eventFlushIntervalSeconds; }
         public int getEventRateLimitPerSecond() { return eventRateLimitPerSecond; }
         public void setEventRateLimitPerSecond(int eventRateLimitPerSecond) { this.eventRateLimitPerSecond = eventRateLimitPerSecond; }
+        public List<String> getAllowedPaths() { return allowedPaths; }
+        public void setAllowedPaths(List<String> allowedPaths) { this.allowedPaths = allowedPaths; }
     }
 
     public static class PricingConfig {

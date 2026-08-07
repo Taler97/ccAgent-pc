@@ -1,5 +1,7 @@
 package com.ccagent.infrastructure.constant;
 
+import java.util.Properties;
+
 /**
  * 全局常量定义
  * <p>集中管理所有路径、文件名、版本号等常量。
@@ -10,10 +12,23 @@ public final class Constants {
 
     private Constants() {}
 
-    /** 应用版本 */
-    public static final String APP_VERSION = "1.0.0";
+    /** 应用版本（从 META-INF/maven pom.properties 读取，开发环境 fallback 到 dev） */
+    public static final String APP_VERSION = loadVersion();
     /** 应用名称 */
     public static final String APP_NAME = "CodePal";
+
+    private static String loadVersion() {
+        try (var is = Constants.class.getResourceAsStream(
+                "/META-INF/maven/com.ccagent/infrastructure/pom.properties")) {
+            if (is != null) {
+                var props = new Properties();
+                props.load(is);
+                String v = props.getProperty("version");
+                if (v != null && !v.isBlank()) return v;
+            }
+        } catch (Exception ignored) {}
+        return "dev";
+    }
 
     /** 运行时数据目录（项目本地） */
     public static final String BASE_DIR = "./.codepal";
@@ -51,4 +66,10 @@ public final class Constants {
     public static final String ARTIFACT_CACHE_DIR = BASE_DIR + "/cache/artifacts";
     /** 插件目录（可选：放置独立 jar 的插件，由独立 ClassLoader 隔离加载，支持卸载重载） */
     public static final String PLUGIN_DIR = BASE_DIR + "/plugins";
+    /** 技能（skill.md）目录：<name>/SKILL.md 或 <name>.md */
+    public static final String SKILLS_DIR = BASE_DIR + "/skills";
+    /** 自定义专家配置目录：<name>.yaml */
+    public static final String EXPERTS_DIR = BASE_DIR + "/experts";
+    /** MCP server 配置目录：<name>.yaml */
+    public static final String MCP_DIR = BASE_DIR + "/mcp";
 }

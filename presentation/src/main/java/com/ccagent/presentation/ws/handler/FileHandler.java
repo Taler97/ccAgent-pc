@@ -3,6 +3,7 @@ package com.ccagent.presentation.ws.handler;
 import com.ccagent.api.model.envelope.Envelope;
 import com.ccagent.api.port.OrchestratorPort;
 import com.ccagent.infrastructure.util.FileUtil;
+import com.ccagent.infrastructure.util.PathUtil;
 import com.ccagent.presentation.ws.MessageRouter.MessageSender;
 
 import java.nio.file.Files;
@@ -50,12 +51,17 @@ public class FileHandler extends HandlerSupport implements WsMessageHandler {
 
         try {
             String rootPath = governanceGateway.loadWorkspaceRoot(sessionId);
-            Path wsRoot = Paths.get(rootPath).normalize();
+            if (rootPath == null || rootPath.isBlank()) {
+                sendResponse(sender, "FILE_LIST_RES", seqId,
+                        "{\"files\":[],\"error\":\"WORKSPACE_NOT_BOUND\"}");
+                return;
+            }
+            Path wsRoot = Paths.get(rootPath).toAbsolutePath().normalize();
 
             Path targetDir = (path == null || path.isBlank() || "/".equals(path))
                     ? wsRoot : wsRoot.resolve(path.startsWith("/") ? path.substring(1) : path).normalize();
 
-            if (!targetDir.startsWith(wsRoot) || !Files.isDirectory(targetDir)) {
+            if (!PathUtil.isAllowedPath(wsRoot.toString(), targetDir.toString()) || !Files.isDirectory(targetDir)) {
                 sendResponse(sender, "FILE_LIST_RES", seqId,
                         "{\"files\":[],\"error\":\"INVALID_PATH\"}");
                 return;
@@ -93,10 +99,15 @@ public class FileHandler extends HandlerSupport implements WsMessageHandler {
 
         try {
             String rootPath = governanceGateway.loadWorkspaceRoot(sessionId);
-            Path wsRoot = Paths.get(rootPath).normalize();
+            if (rootPath == null || rootPath.isBlank()) {
+                sendResponse(sender, "FILE_READ_RES", seqId,
+                        "{\"error\":\"WORKSPACE_NOT_BOUND\"}");
+                return;
+            }
+            Path wsRoot = Paths.get(rootPath).toAbsolutePath().normalize();
             Path target = wsRoot.resolve(filePath.startsWith("/") ? filePath.substring(1) : filePath).normalize();
 
-            if (!target.startsWith(wsRoot)) {
+            if (!PathUtil.isAllowedPath(wsRoot.toString(), target.toString())) {
                 sendResponse(sender, "FILE_READ_RES", seqId,
                         "{\"error\":\"PATH_OUTSIDE_WORKSPACE\"}");
                 return;

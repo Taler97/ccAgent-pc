@@ -25,8 +25,9 @@ import javax.sql.DataSource;
 
 public class OrchestrationModule {
 
-    private GovernanceGateway governanceGateway;
+    public GovernanceGateway governanceGateway;
     private Dispatcher dispatcher;
+    private SimpleOrchestrator orchestrator;
 
     public void init(
             DataSource dataSource,
@@ -70,6 +71,7 @@ public class OrchestrationModule {
         SimpleOrchestrator orchestrator = new SimpleOrchestrator(
                 chatAgent, dispatcher, memoryPort, expertRegistry,
                 planRepo, localDataRepo, artifactStore, eventBus, skillRegistry);
+        this.orchestrator = orchestrator;
 
         governanceGateway = new GovernanceGateway(
                 orchestrator, policyEnforcer, tokenQuotaService,
@@ -90,5 +92,12 @@ public class OrchestrationModule {
 
     public Dispatcher getDispatcher() {
         return dispatcher;
+    }
+
+    /**
+     * 返回编排器实例（供启动期调用 recoverInterruptedPlans 等生命周期方法）
+     */
+    public SimpleOrchestrator getOrchestrator() {
+        return orchestrator;
     }
 }

@@ -56,8 +56,8 @@ public class FaultAnalyzerExpert extends BaseExpert {
     }
 
     @Override
-    public String execute(String task, TaskScope taskScope, Map<String, Object> inputs,
-                           String workspaceRoot, StreamObserver<StreamChunk> observer) {
+    protected String executeLegacy(String task, TaskScope taskScope, Map<String, Object> inputs,
+                                   String workspaceRoot, StreamObserver<StreamChunk> observer) {
         // 从 inputs 或 task 中提取 seqId
         String seqId = null;
         if (inputs != null && inputs.containsKey("seqId")) {

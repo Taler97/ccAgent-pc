@@ -31,4 +31,10 @@ public @interface ExpertAnnotation {
      * 该专家可用的工具名称列表
      */
     String[] tools() default {};
+
+    /**
+     * 该专家绑定的 skill.md 名称列表（模式 B：专家声明式绑定）
+     * <p>对应 skills/ 目录下的技能，注入时合并进 system prompt。</p>
+     */
+    String[] skills() default {};
 }

@@ -58,7 +58,8 @@ public class TokenStatsService implements ListenerExtensionPoint {
     }
 
     public void registerOnEventBus(EventBus eventBus) {
-        subscriptions.add(eventBus.subscribeAsync(LlmCallCompletedEvent.class, event -> {
+        // 同步订阅：确保保存对话时 dialogStats 已更新（异步订阅存在竞态，SimpleOrchestrator 可能读不到本次 token）
+        subscriptions.add(eventBus.subscribe(LlmCallCompletedEvent.class, event -> {
             recordLlmCall(event.getSessionId(), event.getSeqId() != null ? event.getSeqId() : "",
                     event.getInputTokens() + event.getOutputTokens(), event.getCachedInputTokens());
         }));

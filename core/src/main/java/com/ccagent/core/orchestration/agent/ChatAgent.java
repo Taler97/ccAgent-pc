@@ -93,42 +93,63 @@ public class ChatAgent {
             return ChatResult.reply("");
         }
 
-        // 尝试解析 JSON 结构
-        String json = content;
-        if (content.contains("```json")) {
-            int start = content.indexOf("```json") + 7;
-            int end = content.indexOf("```", start);
-            if (end > start) {
-                json = content.substring(start, end).trim();
-            }
-        } else if (content.contains("```")) {
-            int start = content.indexOf("```") + 3;
-            int end = content.indexOf("```", start);
-            if (end > start) {
-                json = content.substring(start, end).trim();
-            }
-        }
-        json = json.trim();
+        String json = extractJson(content);
+        if (json != null) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> result = JsonUtil.fromJson(json, Map.class);
+                if (result != null) {
+                    String type = (String) result.get("type");
+                    String text = (String) result.get("content");
+                    if (text == null) text = (String) result.get("task");
+                    if (text == null) text = "";
 
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> result = JsonUtil.fromJson(json, Map.class);
-            if (result != null) {
-                String type = (String) result.get("type");
-                String text = (String) result.get("content");
-                if (text == null) text = (String) result.get("task");
-                if (text == null) text = "";
-
-                if ("plan".equals(type)) {
-                    return ChatResult.planTask(text);
+                    if ("plan".equals(type)) {
+                        return ChatResult.planTask(text);
+                    }
+                    return ChatResult.reply(text);
                 }
-                return ChatResult.reply(text);
+            } catch (Exception ignored) {
             }
-        } catch (Exception ignored) {
         }
 
         // 无法解析 JSON，当作普通聊天回复
         return ChatResult.reply(content);
+    }
+
+    /**
+     * 从 LLM 输出中提取 JSON 片段，兼容以下形态：
+     * <ol>
+     *   <li>纯 JSON：<code>{"type":"plan",...}</code></li>
+     *   <li>代码块包裹：<code>```json {...} ```</code> 或 <code>``` {...} ```</code></li>
+     *   <li>自然语言前言 + 裸 JSON：<code>我来帮你...{"type":"plan",...}</code>（取首个 {@code {} 到末个 {@code }}）</li>
+     * </ol>
+     * 提取失败返回 null。
+     */
+    private String extractJson(String content) {
+        // 1. ```json 代码块
+        if (content.contains("```json")) {
+            int start = content.indexOf("```json") + 7;
+            int end = content.indexOf("```", start);
+            if (end > start) {
+                return content.substring(start, end).trim();
+            }
+        }
+        // 2. 通用代码块
+        if (content.contains("```")) {
+            int start = content.indexOf("```") + 3;
+            int end = content.indexOf("```", start);
+            if (end > start) {
+                return content.substring(start, end).trim();
+            }
+        }
+        // 3. 裸 JSON：取首个 { 到末个 }
+        int start = content.indexOf('{');
+        int end = content.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            return content.substring(start, end + 1).trim();
+        }
+        return null;
     }
 
     private String buildPrompt(String memorySummary, String userPrompt) {

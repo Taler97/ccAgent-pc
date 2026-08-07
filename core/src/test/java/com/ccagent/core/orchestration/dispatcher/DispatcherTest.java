@@ -50,7 +50,7 @@ class DispatcherTest {
                 .thenAnswer(inv -> {
                     StreamObserver<StreamChunk> obs = inv.getArgument(4);
                     obs.onNext(new StreamChunk("seq-1", "STEP_CHUNK", "done", null));
-                    return "result";
+                    return java.util.Map.of("result", "done");
                 });
 
         EventBus eventBus = new SimpleEventBus(false, 100, 10);
@@ -77,7 +77,7 @@ class DispatcherTest {
 
         when(expertRegistry.getExpert("code-writer")).thenReturn(codeWriter);
         when(codeWriter.execute(anyString(), any(), any(), anyString(), any()))
-                .thenReturn("ok");
+                .thenReturn(java.util.Map.of("result", "ok"));
 
         EventBus eventBus = new SimpleEventBus(false, 100, 10);
         Dispatcher dispatcher = new Dispatcher(expertRegistry, executionPlanRepository,
@@ -195,11 +195,11 @@ class DispatcherTest {
         when(expertRegistry.getExpert("researcher")).thenReturn(codeWriter);
         when(expertRegistry.getExpert("summarizer")).thenReturn(codeWriter);
         when(codeWriter.execute(anyString(), any(), any(), anyString(), any()))
-                .thenReturn("analysis-result")
+                .thenReturn(java.util.Map.of("analysis", "analysis-result"))
                 .thenAnswer(inv -> {
                     Map<String, Object> inputs = inv.getArgument(2);
                     assertThat(inputs.get("analysis")).isEqualTo("analysis-result");
-                    return "summary-based-on-analysis";
+                    return java.util.Map.of("summary", "summary-based-on-analysis");
                 });
 
         EventBus eventBus = new SimpleEventBus(false, 100, 10);
@@ -229,7 +229,7 @@ class DispatcherTest {
 
         when(expertRegistry.getExpert("researcher")).thenReturn(codeWriter);
         when(codeWriter.execute(anyString(), any(), any(), anyString(), any()))
-                .thenReturn("step3-result");
+                .thenReturn(java.util.Map.of("c", "step3-result"));
 
         EventBus eventBus = new SimpleEventBus(false, 100, 10);
         Dispatcher dispatcher = new Dispatcher(expertRegistry, executionPlanRepository,

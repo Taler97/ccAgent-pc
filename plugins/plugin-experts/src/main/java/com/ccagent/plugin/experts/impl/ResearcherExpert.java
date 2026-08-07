@@ -29,8 +29,8 @@ public class ResearcherExpert extends BaseExpert {
     }
 
     @Override
-    public String execute(String task, TaskScope taskScope, Map<String, Object> inputs,
-                          String workspaceRoot, StreamObserver<StreamChunk> observer) {
+    protected String executeLegacy(String task, TaskScope taskScope, Map<String, Object> inputs,
+                                   String workspaceRoot, StreamObserver<StreamChunk> observer) {
         pushStatus(observer, "RUNNING", "开始研究分析: " + truncate(task, 50));
 
         String result = runReActLoop(SYSTEM_PROMPT, task, workspaceRoot, observer);

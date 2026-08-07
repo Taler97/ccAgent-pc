@@ -13,11 +13,20 @@ public class LlmModule {
                 config.getApiKey(),
                 config.getBaseUrl(),
                 config.getModel(),
-                config.getTimeoutStreaming()
+                config.getTimeoutStreaming(),
+                config.isThinkingEnabled(),
+                config.getReasoningEffort()
         );
     }
 
     public LlmPort getLlmPort() {
+        return llmAdapter;
+    }
+
+    /**
+     * 暴露具体适配器实例，供 ConfigHandler 调用 updateThinkingConfig 实现热更
+     */
+    public DeepSeekLlmAdapter getDeepSeekAdapter() {
         return llmAdapter;
     }
 }

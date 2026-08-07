@@ -32,8 +32,8 @@ public class PlannerExpert extends BaseExpert {
     }
 
     @Override
-    public String execute(String task, TaskScope taskScope, Map<String, Object> inputs,
-                          String workspaceRoot, StreamObserver<StreamChunk> observer) {
+    protected String executeLegacy(String task, TaskScope taskScope, Map<String, Object> inputs,
+                                   String workspaceRoot, StreamObserver<StreamChunk> observer) {
         pushStatus(observer, "planning", "正在分析任务并生成执行计划...");
 
         String systemPrompt = buildPlanningSystemPrompt();

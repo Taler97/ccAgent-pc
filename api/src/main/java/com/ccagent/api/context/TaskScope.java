@@ -10,6 +10,11 @@ import java.util.function.Supplier;
  * 任务级黑板作用域
  * <p>每个 Plan 执行期间创建，专家通过此接口消费/生产中间产物（Artifact）。
  * 基于 CompletableFuture 实现生产者-消费者同步：getArtifact().join() 阻塞直到 putArtifact() 完成。</p>
+ *
+ * <h3>缩略型黑板 (LangGraph 风格)</h3>
+ * <p>黑板不存完整 LLM 返回，只存结构化摘要。每个 Key 在 blackboard-schema.yaml 中
+ * 定义类型 (list/string/map) 和合并策略 (append/replace/merge)。
+ * putArtifact 时按 mergeStrategy 与旧值合并，避免下游 context 爆炸。</p>
  */
 public interface TaskScope extends AutoCloseable {
 
@@ -32,6 +37,11 @@ public interface TaskScope extends AutoCloseable {
      * 取消当前任务
      */
     void cancel();
+
+    /**
+     * @return 黑板 schema (字段定义与合并策略), 可能为空 schema (关闭合并)
+     */
+    BlackboardSchema getSchema();
 
     // --- 黑板核心 API ---
 

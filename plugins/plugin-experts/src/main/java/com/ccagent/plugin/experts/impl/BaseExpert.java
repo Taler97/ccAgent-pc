@@ -1,6 +1,9 @@
 package com.ccagent.plugin.experts.impl;
 
 import com.ccagent.core.expert.annotation.ExpertAnnotation;
+import com.ccagent.core.governance.context.ExecutionContextHolder;
+import com.ccagent.core.orchestration.context.ExecutionContext;
+import com.ccagent.core.skill.SkillRegistry;
 import com.ccagent.api.context.TaskScope;
 import com.ccagent.api.model.request.ChatRequest;
 import com.ccagent.api.model.request.ToolCall;
@@ -30,6 +33,10 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
 
     protected ToolRegistryPort toolRegistry;
     protected LlmPort llmPort;
+    /** 技能注册表（由插件上下文注入，可空） */
+    protected SkillRegistry skillRegistry;
+    /** 本专家绑定的技能名（来自 @ExpertAnnotation.skills，可空） */
+    protected List<String> boundSkills;
 
     /**
      * 无参构造（插件化加载用）
@@ -48,6 +55,11 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
     public void init(PluginContext context) {
         this.toolRegistry = context.getService(ToolRegistryPort.class);
         this.llmPort = context.getService(LlmPort.class);
+        this.skillRegistry = context.getService(SkillRegistry.class);
+        ExpertAnnotation annotation = getClass().getAnnotation(ExpertAnnotation.class);
+        if (annotation != null && annotation.skills().length > 0) {
+            this.boundSkills = List.of(annotation.skills());
+        }
     }
 
     /**
@@ -57,6 +69,59 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
     @Override
     public void execute(String task, String workspaceRoot, StreamObserver<StreamChunk> observer) {
         execute(task, null, Map.of(), workspaceRoot, observer);
+    }
+
+    /**
+     * 默认实现: 调用 {@link #executeLegacy(String, TaskScope, Map, String, StreamObserver)}
+     * 并把返回的 String 包装成 {@code Map.of("result", string)} 作为兜底产物.
+     * <p>子类可选择重写此方法返回多 Key 结构化产物, 或重写 executeLegacy 保持单字符串风格.</p>
+     */
+    @Override
+    public Map<String, Object> execute(String task, TaskScope taskScope, Map<String, Object> inputs,
+                                       String workspaceRoot, StreamObserver<StreamChunk> observer) {
+        String result = executeLegacy(task, taskScope, inputs, workspaceRoot, observer);
+        return result != null ? Map.of("result", result) : Map.of();
+    }
+
+    /**
+     * 旧风格执行 (单字符串返回). 子类重写此方法保持原行为, 返回值会被包装成 {@code Map.of("result", ...)}.
+     */
+    protected String executeLegacy(String task, TaskScope taskScope, Map<String, Object> inputs,
+                                   String workspaceRoot, StreamObserver<StreamChunk> observer) {
+        return "";
+    }
+
+    /**
+     * 把 inputs Map 格式化为缩略上下文 (塞进 Prompt)
+     * <p>只取每个 Key 的摘要, 不塞完整内容, 避免 context 爆炸.</p>
+     */
+    protected String formatInputsAsContext(Map<String, Object> inputs) {
+        if (inputs == null || inputs.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder("\n\n## 上游产物\n");
+        for (Map.Entry<String, Object> e : inputs.entrySet()) {
+            sb.append("- ").append(e.getKey()).append(": ");
+            Object v = e.getValue();
+            if (v instanceof List) {
+                sb.append(((List<?>) v).size()).append(" 项");
+            } else if (v instanceof Map) {
+                sb.append(((Map<?, ?>) v).size()).append(" 个字段");
+            } else {
+                sb.append(truncate(String.valueOf(v), 100));
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 引导 LLM 产出结构化缩略数据的 Prompt 片段
+     * @param writes 本 Step 声明的 writes Key 集合
+     */
+    protected String structuredOutputGuidance(java.util.Set<String> writes) {
+        if (writes == null || writes.isEmpty()) return "";
+        return "\n\n## 输出要求\n请返回 JSON, 只包含以下字段 (缩略信息, 不要返回完整内容):\n"
+                + writes.stream().map(k -> "- " + k).collect(java.util.stream.Collectors.joining("\n"))
+                + "\n\n示例: {\"" + writes.iterator().next() + "\": \"...\"}";
     }
 
     /**
@@ -71,7 +136,7 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
     protected String callLlm(String systemPrompt, String userPrompt,
                               StreamObserver<StreamChunk> observer) {
         ChatRequest request = new ChatRequest(
-                systemPrompt, userPrompt, List.of(),
+                buildEffectiveSystemPrompt(systemPrompt), userPrompt, List.of(),
                 false, 8192, 0.3, 60
         );
         StringBuilder fullContent = new StringBuilder();
@@ -213,6 +278,30 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
     }
 
     /**
+     * 构建生效 system prompt：基础 prompt + 会话级 skills（模式 A）+ 专家绑定 skills（模式 B）。
+     * <p>两路注入均通过 {@link SkillRegistry} 解析 skill.md 正文，任一路不存在时自动跳过。</p>
+     */
+    protected String buildEffectiveSystemPrompt(String basePrompt) {
+        StringBuilder sb = new StringBuilder(basePrompt == null ? "" : basePrompt);
+
+        // 1. 会话级 skills（来自 ExecutionContext，经虚拟线程 propagate 传播）
+        ExecutionContext ctx = ExecutionContextHolder.getContext();
+        if (ctx != null && ctx.getSkillsPrompt() != null && !ctx.getSkillsPrompt().isBlank()) {
+            sb.append("\n\n## 本会话启用的技能规范\n").append(ctx.getSkillsPrompt());
+        }
+
+        // 2. 专家绑定 skills（@ExpertAnnotation.skills 声明）
+        if (skillRegistry != null && boundSkills != null && !boundSkills.isEmpty()) {
+            String bound = skillRegistry.resolvePrompt(boundSkills);
+            if (bound != null && !bound.isBlank()) {
+                sb.append("\n\n## 本专家绑定的技能规范\n").append(bound);
+            }
+        }
+
+        return sb.toString();
+    }
+
+    /**
      * 执行 ReAct 循环：LLM 自主调用工具，直到返回最终答案
      *
      * @param systemPrompt  系统提示词
@@ -224,6 +313,7 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
     protected String runReActLoop(String systemPrompt, String userPrompt,
                                    String workspaceRoot,
                                    StreamObserver<StreamChunk> observer) {
+        String effectivePrompt = buildEffectiveSystemPrompt(systemPrompt);
         List<ToolDefinition> tools = getAvailableTools();
         List<Map<String, Object>> messages = new ArrayList<>();
         messages.add(Map.<String, Object>of("role", "user", "content", userPrompt));
@@ -236,7 +326,7 @@ public abstract class BaseExpert implements ExpertExtensionPoint {
             loopCount++;
 
             ChatRequest request = new ChatRequest(
-                    systemPrompt,
+                    effectivePrompt,
                     "",
                     tools,
                     true,

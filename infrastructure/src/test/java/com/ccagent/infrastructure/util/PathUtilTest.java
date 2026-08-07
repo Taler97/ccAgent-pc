@@ -56,4 +56,47 @@ class PathUtilTest {
         String resolved = PathUtil.resolve(sep + "workspace", "../../etc/passwd");
         assertThat(PathUtil.isSubPath(sep + "workspace", resolved)).isFalse();
     }
+
+    @Test
+    void shouldAllowWorkspaceRootByDefault(@TempDir Path tempDir) {
+        Path ws = tempDir.resolve("ws");
+        PathUtil.setAllowedPaths(java.util.List.of());
+        assertThat(PathUtil.isAllowedPath(ws.toString(), ws.resolve("a.txt").toString())).isTrue();
+        assertThat(PathUtil.isAllowedPath(ws.toString(), tempDir.resolve("b.txt").toString())).isFalse();
+    }
+
+    @Test
+    void shouldAllowWhitelistedPath(@TempDir Path tempDir) {
+        Path ws = tempDir.resolve("ws");
+        Path shared = tempDir.resolve("shared");
+        PathUtil.setAllowedPaths(java.util.List.of(shared.toString()));
+        try {
+            // 白名单目录内（工作区之外）放行
+            assertThat(PathUtil.isAllowedPath(ws.toString(), shared.resolve("data.txt").toString())).isTrue();
+            // 工作区内仍然放行
+            assertThat(PathUtil.isAllowedPath(ws.toString(), ws.resolve("a.txt").toString())).isTrue();
+        } finally {
+            PathUtil.setAllowedPaths(java.util.List.of());
+        }
+    }
+
+    @Test
+    void shouldRejectPathOutsideWorkspaceAndWhitelist(@TempDir Path tempDir) {
+        Path ws = tempDir.resolve("ws");
+        Path shared = tempDir.resolve("shared");
+        Path outside = tempDir.resolve("outside");
+        PathUtil.setAllowedPaths(java.util.List.of(shared.toString()));
+        try {
+            assertThat(PathUtil.isAllowedPath(ws.toString(), outside.resolve("x.txt").toString())).isFalse();
+        } finally {
+            PathUtil.setAllowedPaths(java.util.List.of());
+        }
+    }
+
+    @Test
+    void shouldIgnoreBlankWhitelistEntries(@TempDir Path tempDir) {
+        Path ws = tempDir.resolve("ws");
+        PathUtil.setAllowedPaths(java.util.List.of("", "  "));
+        assertThat(PathUtil.isAllowedPath(ws.toString(), tempDir.resolve("x.txt").toString())).isFalse();
+    }
 }

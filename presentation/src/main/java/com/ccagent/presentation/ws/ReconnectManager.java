@@ -18,7 +18,9 @@ public class ReconnectManager {
     }
 
     /**
-     * 开始重连（异步）
+     * 开始重连（异步）。
+     * <p>若已有重连线程在运行则不重复启动；连接成功后应调用 {@link #stop()} 停止循环，
+     * 断开/失败时再调用本方法重新启动。</p>
      */
     public synchronized void start(Runnable reconnectAction) {
         if (running) return;

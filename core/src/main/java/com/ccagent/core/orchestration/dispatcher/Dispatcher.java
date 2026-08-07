@@ -27,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
@@ -50,6 +51,11 @@ public class Dispatcher {
     private final ArtifactStore artifactStore;
     private final EventBus eventBus;
     private final ProgressStore progressStore;
+
+    /** 单步骤等待黑板产物就绪的最大时长（防止生产者异常导致消费者永久挂起） */
+    private static final long BLACKBOARD_WAIT_TIMEOUT_MINUTES = 5;
+    /** 单批次所有步骤完成的最大时长（含 LLM 调用 + 工具执行的上限） */
+    private static final long BATCH_WAIT_TIMEOUT_MINUTES = 10;
 
     /**
      * CPU 密集型步骤专用平台线程池（大小 = 可用处理器数）
@@ -202,8 +208,9 @@ public class Dispatcher {
                     }
                 }
 
-                // 等待虚拟线程 + 平台线程池所有任务完成
-                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                // 等待虚拟线程 + 平台线程池所有任务完成（加超时防止永久挂起）
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                        .orTimeout(BATCH_WAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES).join();
 
                 // 检查是否需要清理当前批次
                 boolean hasFailure = batchResult.values().stream().anyMatch(r -> !r);
@@ -274,14 +281,19 @@ public class Dispatcher {
             observer.onNext(stepStart);
             progressStore.startStep(seqId, step.getId());
 
-            // 活动拦截：专家推送的 ACTIVITY 事件只写入进度存储（闭包绑定当前 stepId），
-            // 不转发下游，避免并发多步骤时产生大量实时推送流量，由查询接口按需读取
+            // 活动事件：专家推送的 ACTIVITY 同时写入进度存储，并注入 stepId + expertName 转发前端，
+            // 保证并发多步骤时前端看板能正确归属活动文本
             StreamObserver<StreamChunk> activityObserver = new StreamObserver<>() {
                 @Override
                 public void onNext(StreamChunk chunk) {
                     if ("ACTIVITY".equals(chunk.getType())
                             && chunk.getContent() != null && !chunk.getContent().isEmpty()) {
-                        progressStore.updateActivity(seqId, step.getId(), chunk.getContent());
+                        String activity = chunk.getContent();
+                        progressStore.updateActivity(seqId, step.getId(), activity);
+                        String wrapped = "{\"stepId\":" + step.getId()
+                                + ",\"expert\":\"" + step.getExpertName().replace("\"", "'")
+                                + "\",\"activity\":\"" + activity.replace("\"", "'") + "\"}";
+                        observer.onNext(new StreamChunk(seqId, "ACTIVITY", wrapped, null));
                         return;
                     }
                     observer.onNext(chunk);
@@ -301,29 +313,46 @@ public class Dispatcher {
             eventBus.publish(new StepStartedEvent(seqId, sessionId, step.getId(), totalSteps,
                     step.getExpertName(), step.getAffectedFiles()));
 
-            // 等待黑板 reads 就绪（非阻塞挂起虚拟线程）
+            // 等待黑板 reads 就绪（非阻塞挂起虚拟线程，加超时防止生产者异常导致永久挂起）
             Set<String> reads = step.getReads();
             Map<String, Object> inputs = new HashMap<>();
             if (reads != null && !reads.isEmpty()) {
                 List<CompletableFuture<?>> deps = reads.stream()
                         .map(task::getArtifact)
                         .collect(Collectors.toList());
-                CompletableFuture.allOf(deps.toArray(new CompletableFuture[0])).join();
+                CompletableFuture.allOf(deps.toArray(new CompletableFuture[0]))
+                        .orTimeout(BLACKBOARD_WAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES).join();
                 for (String key : reads) {
-                    inputs.put(key, task.getArtifact(key).join());
+                    inputs.put(key, task.getArtifact(key)
+                            .orTimeout(BLACKBOARD_WAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES).join());
                 }
             }
 
             // 调用专家（黑板模式）
             Expert expert = expertRegistryPort.getExpert(step.getExpertName());
-            String result = expert.execute(step.getTask(), task, inputs, workspaceRoot, activityObserver);
+            Map<String, Object> outputs = expert.execute(step.getTask(), task, inputs, workspaceRoot, activityObserver);
 
-            // 写入黑板 writes
+            // 写入黑板: 遍历 Expert 返回的 Map, 按 schema mergeStrategy 合并
             Set<String> writes = step.getWrites();
-            if (writes != null && !writes.isEmpty() && result != null) {
-                for (String key : writes) {
+            Set<String> writtenKeys = new HashSet<>();
+            if (outputs != null && !outputs.isEmpty()) {
+                for (Map.Entry<String, Object> e : outputs.entrySet()) {
+                    String key = e.getKey();
+                    // 只写 step 声明的 writes Key (防止 Expert 越界写)
+                    if (writes != null && !writes.contains(key)) continue;
                     if (step.isPersistOutput()) task.markPersistent(key);
-                    task.putArtifact(key, result);
+                    task.putArtifact(key, e.getValue());
+                    writtenKeys.add(key);
+                }
+            }
+            // 兜底: writes 中未被 Expert 写入的 key (如老 Expert 返回 "result" 但 writes 是 "k1"),
+            // 写空串避免下游 getArtifact().join() 永久阻塞
+            if (writes != null && !writes.isEmpty()) {
+                for (String key : writes) {
+                    if (!writtenKeys.contains(key)) {
+                        if (step.isPersistOutput()) task.markPersistent(key);
+                        task.putArtifact(key, "");
+                    }
                 }
             }
 

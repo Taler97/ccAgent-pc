@@ -43,6 +43,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
@@ -54,7 +55,7 @@ import static org.assertj.core.api.Assertions.fail;
  * （调用 DeepSeek API，key 来自 ccagent.yaml）、H2 内存库、真实 EventBus。</p>
  *
  * <p>注意：LLM 为真实外部调用，行为不可控（是否调工具、耗时均不确定），
- * 故断言聚焦查询链路本身：状态流转、快照结构、活动不泄漏、完成后销毁；
+ * 故断言聚焦查询链路本身：状态流转、快照结构、活动归属转发、完成后销毁；
  * 不对 LLM 生成内容做精确断言。</p>
  */
 @Tag("real-llm")
@@ -136,15 +137,11 @@ class DispatcherProgressIntegrationTest {
         public void onComplete() {
             done.countDown();
         }
-
-        boolean hasActivity() {
-            return chunks.stream().anyMatch(c -> "ACTIVITY".equals(c.getType()));
-        }
     }
 
     /**
      * 场景：5 步黑板依赖 DAG，批次1（writer、researcher）并发执行，执行中查询进度
-     * <p>验证：并发步骤进入 RUNNING、快照结构完整、活动不泄漏到下游、完成后销毁。</p>
+     * <p>验证：并发步骤进入 RUNNING、快照结构完整、活动归属转发、完成后销毁。</p>
      */
     @SuppressWarnings("unchecked")
     @Test
@@ -166,7 +163,7 @@ class DispatcherProgressIntegrationTest {
         String seqId = "seq-progress";
         String sessionId = "session-progress";
         int planVersion = planRepo.createPlan(sessionId, plan);
-        planRepo.updatePlanStatus(sessionId, planVersion, "EXECUTING");
+        planRepo.updatePlanStatus(sessionId, planVersion, "RUNNING");
 
         TaskContextImpl task = new TaskContextImpl(sessionId + "_" + planVersion, plan, artifactStore, tempDir.toString());
         AtomicBoolean cancelled = new AtomicBoolean(false);
@@ -209,8 +206,16 @@ class DispatcherProgressIntegrationTest {
             task.close();
         }
 
-        // 4. ACTIVITY 事件不泄漏到下游（只写 store，不推送）
-        assertThat(observer.hasActivity()).isFalse();
+        // 4. ACTIVITY 事件转发到下游且携带 stepId + expert（并发归属校验）
+        List<StreamChunk> activityChunks = observer.chunks.stream()
+                .filter(c -> "ACTIVITY".equals(c.getType()))
+                .collect(Collectors.toList());
+        assertThat(activityChunks).isNotEmpty();
+        for (StreamChunk c : activityChunks) {
+            Map<String, Object> m = JsonUtil.fromJson(c.getContent(), Map.class);
+            assertThat(m).containsKeys("stepId", "expert", "activity");
+            assertThat(m.get("activity")).isNotNull();
+        }
 
         // 5. 任务结束销毁：查询返回 null
         assertThat(progressStore.snapshot(seqId)).isNull();
@@ -231,7 +236,7 @@ class DispatcherProgressIntegrationTest {
         String seqId = "seq-resume";
         String sessionId = "session-resume";
         int planVersion = planRepo.createPlan(sessionId, plan);
-        planRepo.updatePlanStatus(sessionId, planVersion, "EXECUTING");
+        planRepo.updatePlanStatus(sessionId, planVersion, "RUNNING");
 
         TaskContextImpl task = new TaskContextImpl(sessionId + "_" + planVersion, plan, artifactStore, tempDir.toString());
         AtomicBoolean cancelled = new AtomicBoolean(false);

@@ -107,7 +107,7 @@
 
 | 组件 | 职责 |
 |------|------|
-| **PolicyEnforcer** | 策略执行，校验 Plan 合法性 |
+| **PolicyEnforcer** | 策略执行，校验 Plan 合法性 + 路径白名单校验 |
 | **TokenQuotaService** | Token 配额管理，防止超额 |
 | **PlanSanitizer** | Plan 安全清洗 |
 | **ExecutionIsolator** | 执行隔离（NoOp/沙箱模式） |
@@ -152,6 +152,35 @@ Dispatcher 按 DAG 依赖图调度步骤执行，支持文件级和 Key 级别�
 - **Key 依赖**：Step A 写入 Blackboard 的 Key 是 Step B 读取的 Key
 - **循环检测**：检测到 Key 级循环依赖时抛出 `PlanCycleException`
 - **并行执行**：无依赖关系的 Step 可并发执行
+
+### 路径安全白名单（Path Whitelist）
+
+路径校验采用 **"工作区 ∪ 白名单"** 放行策略：既允许会话工作区（动态白名单）内的所有路径访问，也允许用户声明的、位于工作区之外的关联目录（静态白名单），防止路径穿越的同时保证跨目录协作。
+
+- **动态白名单**：当前会话的工作区根目录，自动放行其下所有路径
+- **静态白名单**：用户在配置文件中声明的额外目录（如共享资源库、企业数据目录）
+
+**配置方式**（`~/.code-pal/config.yaml`）：
+
+```yaml
+governance:
+  allowedPaths:
+    - "D:\shared\assets"     # 工作区之外的关联文件夹
+    - "/home/user/data"
+```
+
+**放行判定**：请求路径规范化后，命中工作区根目录或任一白名单目录（含其子目录）即放行；否则抛出 `SecurityException`（`PATH_TRAVERSAL_DETECTED`）。
+
+**校验入口统一走白名单**：
+
+| 入口 | 覆盖场景 |
+|------|---------|
+| `PolicyEnforcer.checkPath` | 治理层统一路径校验 |
+| `DefaultToolRegistry.executeTool` | 工具调用参数校验（`path` / `source` / `target` 键） |
+| `FileOperationTool.validatePath` | 文件操作工具内部校验（copy/move/delete/mkdir/stat） |
+| `FileHandler` | 前端文件浏览（FILE_LIST）与文件读取（FILE_READ） |
+
+白名单为进程级启动配置，由 `DependencyGraph` 装配时一次性注入 `PathUtil`，运行时不可变更。
 
 ### 回滚机制
 
@@ -204,6 +233,60 @@ Dispatcher 按 DAG 依赖图调度步骤执行，支持文件级和 Key 级别�
 
 虚拟线程不加速 CPU 密集计算，且会抢占有限的 carrier 线程影响其他 IO 任务，因此 CPU 密集步骤被分流到独立的平台线程池执行，两池通过 `CompletableFuture.allOf()` 统一等待批次完成。
 
+### 技能体系（Skill.md）
+
+对齐 Claude Agent Skills 约定，通过 `SKILL.md` 声明技能，为专家注入领域规范。支持目录与单文件两种形式：
+
+```
+.codepal/skills/
+  ├── writer-enhance/SKILL.md   # 目录形式（name 默认取目录名）
+  └── analyzer.md               # 单文件形式（name 默认取文件名）
+```
+
+**SKILL.md 格式**（YAML frontmatter + 正文 prompt）：
+
+```markdown
+---
+name: writer-enhance
+description: 写作规范
+expert: writer        # 可选：绑定专家
+enabled: true         # 可选：默认 true，false 时跳过加载
+---
+正文 prompt（引擎启动时注入专家的 system prompt）
+```
+
+**使用方式：**
+
+1. 在 `.codepal/skills/` 下新建 `<name>/SKILL.md`（或 `<name>.md`），按上述格式填写
+2. 重启引擎，`SkillRegistry` 启动时扫描加载（`enabled: false` 或正文为空自动跳过）
+3. 绑定专家：自定义专家 [experts/*.yaml](presentation/src/main/java/com/ccagent/presentation/di/CustomExpertLoader.java) 中声明 `skills: [writer-enhance]`，专家启动时经 `SkillRegistry.resolvePrompt()` 将技能正文合并进 system prompt
+4. 前端可通过 `SKILL_LIST_REQ` 查询已注册技能列表（名称/描述/绑定专家）
+
+### MCP 外部工具（Model Context Protocol）
+
+通过 MCP 标准协议接入外部工具服务（如 GitHub、数据库、企业私有服务），由 `McpClientManager` 连接并**动态注册**为工具供专家 ReAct 循环调用，无需改代码即可扩展工具集。
+
+**配置**：在 `.codepal/mcp/` 下放置 `<name>.yaml`（参考 [.codepal/mcp/example.yaml](.codepal/mcp/example.yaml)）：
+
+```yaml
+name: github
+transport: http            # http（Streamable HTTP）；stdio 预留
+url: https://mcp.example.com
+headers:
+  Authorization: "Bearer xxx"
+enabled: true              # false 时跳过该 server
+toolPrefix: github         # 工具命名前缀，默认取 name
+```
+
+**使用方式：**
+
+1. 复制 `example.yaml` 为 `<name>.yaml`，填写真实 `url` / `headers`，`enabled: true`
+2. 重启引擎，启动时自动连接（`initialize` + `listTools`），失败仅跳过该 server，不影响引擎
+3. 每个远端工具包装为 `mcp_<prefix>_<tool>` 注册进 ToolRegistry，参数 JSON Schema 一并暴露给 LLM 生成调用参数
+4. 前端 MCP 面板（云端 `/api/pc/mcp/status` 经 WS 转发）实时展示各 server 连接状态与工具数
+
+**当前边界**：传输支持 `http`（Streamable HTTP）；`stdio` 传输预留（需额外引入 `mcp-transport-stdio` 构件）。
+
 ---
 
 ## 模块一览
@@ -225,8 +308,8 @@ Dispatcher 按 DAG 依赖图调度步骤执行，支持文件级和 Key 级别�
 
 | 模式 | 命令 | 说明 |
 |------|------|------|
-| **CLI 交互** | `java ... AgentMain`（无参数） | 引擎嵌入进程，命令行直接输入指令交互 |
-| **守护进程** | `java ... AgentMain --headless` | 后台运行，通过 WebSocket 连接 Cloud Server 接受远程任务调度 |
+| **CLI 交互** | `java ... AgentMain`（无参数） | 引擎嵌入进程，命令行直接输入指令交互，纯本地不连云端 |
+| **远程模式** | `java ... AgentMain --background` | 引擎后台运行，通过 WebSocket 连接 Cloud Server 接受远程任务调度（旧参数 `--headless` 兼容） |
 
 ---
 
@@ -257,7 +340,8 @@ mvn exec:java -pl presentation
 
 - **Java 21**（虚拟线程、模式匹配、Records）
 - **Maven 3.9+**
-- **Jackson 2.17**（JSON/YAML 序列化）
+- **Jackson 2.20**（JSON/YAML 序列化）
 - **H2 Database 2.2** + **HikariCP 5.1**（嵌入式持久化）
 - **picocli 4.7**（CLI 参数解析）
+- **MCP Java SDK 0.18**（Model Context Protocol 客户端）
 - **DeepSeek API**（运行时需配置 API Key）

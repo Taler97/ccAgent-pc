@@ -15,6 +15,8 @@ public class ChatResponse {
     private int totalTokens;
     private int cachedTokens;
     private String finishReason;
+    // DeepSeek 思考模式返回的思维链内容（与 content 同级）
+    private String reasoningContent;
 
     public ChatResponse() {}
 
@@ -37,4 +39,6 @@ public class ChatResponse {
     public void setCachedTokens(int cachedTokens) { this.cachedTokens = cachedTokens; }
     public String getFinishReason() { return finishReason; }
     public void setFinishReason(String finishReason) { this.finishReason = finishReason; }
+    public String getReasoningContent() { return reasoningContent; }
+    public void setReasoningContent(String reasoningContent) { this.reasoningContent = reasoningContent; }
 }

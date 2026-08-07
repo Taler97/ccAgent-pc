@@ -14,7 +14,11 @@ public class SeqLockManager {
     private final ConcurrentHashMap<String, ReentrantLock> seqLocks = new ConcurrentHashMap<>();
 
     /**
-     * 加锁执行（有返回值），执行后锁自动清理。
+     * 加锁执行（有返回值），执行后锁在空闲时自动清理。
+     * <p>不立即删除锁对象：避免 use-and-delete 竞态——
+     * 线程 A 持锁执行时线程 B computeIfAbsent 拿到同一把锁阻塞等待，
+     * A unlock 后立即 remove 会导致线程 C 创建新锁并并发执行，锁失效。
+     * 仅当锁空闲且无等待者时才用条件删除清理。</p>
      */
     public <T> T withLock(String seqId, Supplier<T> task) {
         ReentrantLock lock = seqLocks.computeIfAbsent(seqId, k -> new ReentrantLock());
@@ -23,7 +27,17 @@ public class SeqLockManager {
             return task.get();
         } finally {
             lock.unlock();
-            seqLocks.remove(seqId);
+            // tryLock 成功 = 此刻无线程持有；hasQueuedThreads=false = 无线程排队等待
+            // 双重检查后才用条件删除 remove(key, value)，避免删错或删掉正在被等待的锁
+            if (lock.tryLock()) {
+                try {
+                    if (!lock.hasQueuedThreads()) {
+                        seqLocks.remove(seqId, lock);
+                    }
+                } finally {
+                    lock.unlock();
+                }
+            }
         }
     }
 

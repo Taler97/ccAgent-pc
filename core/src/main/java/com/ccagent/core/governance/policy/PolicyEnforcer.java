@@ -41,9 +41,9 @@ public class PolicyEnforcer {
         if (requestedPath == null || requestedPath.isBlank()) {
             return; // 空路径不做检查
         }
-        if (!PathUtil.isSubPath(workspaceRoot, requestedPath)) {
+        if (!PathUtil.isAllowedPath(workspaceRoot, requestedPath)) {
             throw new SecurityException(ErrorCode.PATH_TRAVERSAL_DETECTED,
-                    "路径超出工作区范围: " + requestedPath, requestedPath, workspaceRoot);
+                    "路径超出工作区及白名单范围: " + requestedPath, requestedPath, workspaceRoot);
         }
     }
 }

@@ -33,4 +33,12 @@ public interface ToolExecutor {
      * @return 是否只读
      */
     boolean isReadOnly();
+
+    /**
+     * 参数 JSON Schema（properties 部分，可选）
+     * <p>默认返回空 Map；MCP 等动态工具可覆盖以保留完整参数结构。</p>
+     */
+    default Map<String, Object> getParameters() {
+        return Map.of();
+    }
 }

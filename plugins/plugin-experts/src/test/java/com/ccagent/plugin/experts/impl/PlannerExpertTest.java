@@ -85,7 +85,7 @@ class PlannerExpertTest {
         when(llmPort.chat(any())).thenReturn(
                 new ChatResponse(planJson, null, 100, 0, "stop"));
 
-        String result = planner.execute("分析架构", null, Map.of(), "/workspace", observer);
+        String result = planner.executeLegacy("分析架构", null, Map.of(), "/workspace", observer);
 
         Plan plan = JsonUtil.fromJson(result, Plan.class);
         assertThat(plan.getSummary()).isEqualTo("分析架构并生成文档");
@@ -126,7 +126,7 @@ class PlannerExpertTest {
         when(llmPort.chat(any())).thenReturn(
                 new ChatResponse(planJson, null, 100, 0, "stop"));
 
-        String result = planner.execute("修复空指针", null, Map.of(), "/workspace", observer);
+        String result = planner.executeLegacy("修复空指针", null, Map.of(), "/workspace", observer);
 
         Plan plan = JsonUtil.fromJson(result, Plan.class);
         assertThat(plan.getSummary()).isEqualTo("修复空指针异常");
@@ -172,7 +172,7 @@ class PlannerExpertTest {
         when(llmPort.chat(any())).thenReturn(
                 new ChatResponse(planJson, null, 200, 0, "stop"));
 
-        String result = planner.execute("添加用户注册功能", null, Map.of(), "/workspace", observer);
+        String result = planner.executeLegacy("添加用户注册功能", null, Map.of(), "/workspace", observer);
 
         Plan plan = JsonUtil.fromJson(result, Plan.class);
         assertThat(plan.getSteps()).hasSize(3);
@@ -205,7 +205,7 @@ class PlannerExpertTest {
         when(llmPort.chat(any())).thenReturn(
                 new ChatResponse("抱歉，我没有足够的信息来制定计划", null, 10, 0, "stop"));
 
-        String result = planner.execute("xxx", null, Map.of(), "/workspace", observer);
+        String result = planner.executeLegacy("xxx", null, Map.of(), "/workspace", observer);
 
         Plan fallback = JsonUtil.fromJson(result, Plan.class);
         assertThat(fallback.getSummary()).isEqualTo("规划失败");
@@ -218,7 +218,7 @@ class PlannerExpertTest {
         when(llmPort.chat(any())).thenReturn(
                 new ChatResponse("", null, 0, 0, "stop"));
 
-        String result = planner.execute("xxx", null, Map.of(), "/workspace", observer);
+        String result = planner.executeLegacy("xxx", null, Map.of(), "/workspace", observer);
 
         Plan fallback = JsonUtil.fromJson(result, Plan.class);
         assertThat(fallback.getSummary()).isEqualTo("规划失败");
@@ -231,7 +231,7 @@ class PlannerExpertTest {
         when(llmPort.chat(any())).thenReturn(
                 new ChatResponse("   \n  \t  ", null, 0, 0, "stop"));
 
-        String result = planner.execute("xxx", null, Map.of(), "/workspace", observer);
+        String result = planner.executeLegacy("xxx", null, Map.of(), "/workspace", observer);
 
         Plan fallback = JsonUtil.fromJson(result, Plan.class);
         assertThat(fallback.getSummary()).isEqualTo("规划失败");
@@ -244,7 +244,7 @@ class PlannerExpertTest {
         when(llmPort.chat(any())).thenReturn(
                 new ChatResponse("{summary: missing quotes}", null, 10, 0, "stop"));
 
-        String result = planner.execute("xxx", null, Map.of(), "/workspace", observer);
+        String result = planner.executeLegacy("xxx", null, Map.of(), "/workspace", observer);
 
         Plan fallback = JsonUtil.fromJson(result, Plan.class);
         assertThat(fallback.getSummary()).isEqualTo("规划失败");

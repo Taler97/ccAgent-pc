@@ -22,7 +22,7 @@ public class CloudWebSocketClient {
     private static final int PONG_TIMEOUT_SECONDS = 60;
 
     private final String baseUrl;
-    private final MessageRouter router;
+    private final MessageDispatcher dispatcher;
     private final StateManager stateManager;
     private final ReconnectManager reconnectManager;
     private final HttpClient httpClient;
@@ -34,10 +34,10 @@ public class CloudWebSocketClient {
     private volatile Thread pingThread;
     private volatile long lastPongTimestamp = System.currentTimeMillis();
 
-    public CloudWebSocketClient(String baseUrl, MessageRouter router, StateManager stateManager,
+    public CloudWebSocketClient(String baseUrl, MessageDispatcher dispatcher, StateManager stateManager,
                                  ReconnectManager reconnectManager) {
         this.baseUrl = baseUrl;
-        this.router = router;
+        this.dispatcher = dispatcher;
         this.stateManager = stateManager;
         this.reconnectManager = reconnectManager;
         this.httpClient = HttpClient.newHttpClient();
@@ -59,6 +59,7 @@ public class CloudWebSocketClient {
             webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "");
             webSocket = null;
         }
+        dispatcher.shutdown();
     }
 
     public void shutdown() {
@@ -135,7 +136,9 @@ public class CloudWebSocketClient {
                             webSocket = ws;
                             sender = createSender();
                             connecting.set(false);
-                            reconnectManager.reset();
+                            // 注意：不在此处调用 reconnectManager.stop()，
+                            // 否则会 interrupt 正在执行 connect() 的线程（.get() 阻塞中），导致误判为连接失败。
+                            // stop() 改由 connect() 中 .get() 成功返回后调用。
                             lastPongTimestamp = System.currentTimeMillis();
                             stateManager.setCloudState(StateManager.CloudState.CONNECTED);
 
@@ -153,10 +156,12 @@ public class CloudWebSocketClient {
                             if (last) {
                                 String fullMessage = messageBuffer.toString();
                                 messageBuffer.setLength(0);
+                                // 所有消息统一交由 MessageDispatcher 分发到对应通道（对话/工具/控制），
+                                // onText 线程不执行任何业务逻辑，彻底解放给 onPong 心跳应答。
                                 try {
-                                    router.route(fullMessage, sender);
+                                    dispatcher.dispatch(fullMessage, sender);
                                 } catch (Exception e) {
-                                    LOG.warning("消息路由失败: " + e.getMessage());
+                                    LOG.warning("消息分发失败: " + e.getMessage());
                                 }
                             }
                             ws.request(1);
@@ -193,6 +198,8 @@ public class CloudWebSocketClient {
                             if (running) reconnectManager.start(CloudWebSocketClient.this::connect);
                         }
                     }).get(10, TimeUnit.SECONDS);
+            // 握手成功返回，停止重连循环（仅断开/失败时才需要重连）
+            reconnectManager.stop();
         } catch (Exception e) {
             connecting.set(false);
             LOG.warning("连接失败: " + e.getMessage());

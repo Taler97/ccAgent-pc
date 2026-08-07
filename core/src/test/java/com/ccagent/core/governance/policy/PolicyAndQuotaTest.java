@@ -4,6 +4,7 @@ import com.ccagent.api.model.plan.Plan;
 import com.ccagent.api.model.plan.Step;
 import com.ccagent.exception.governance.GovernanceException;
 import com.ccagent.exception.security.SecurityException;
+import com.ccagent.infrastructure.util.PathUtil;
 import org.junit.jupiter.api.Test;
 import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +30,27 @@ class PolicyEnforcerTest {
     void shouldAcceptValidPath() {
         enforcer.checkPath("/workspace", "/workspace/src/main");
         // No exception expected
+    }
+
+    @Test
+    void shouldAllowWhitelistedPathOutsideWorkspace() {
+        String sep = java.io.File.separator;
+        String shared = sep + "shared";
+        PathUtil.setAllowedPaths(java.util.List.of(shared));
+        try {
+            // 工作区之外但在白名单内 → 放行
+            enforcer.checkPath(sep + "workspace", shared + sep + "data");
+        } finally {
+            PathUtil.setAllowedPaths(java.util.List.of());
+        }
+    }
+
+    @Test
+    void shouldRejectPathOutsideWorkspaceAndWhitelist() {
+        String sep = java.io.File.separator;
+        PathUtil.setAllowedPaths(java.util.List.of());
+        assertThatThrownBy(() -> enforcer.checkPath(sep + "workspace", sep + "etc" + sep + "passwd"))
+                .isInstanceOf(SecurityException.class);
     }
 }
 

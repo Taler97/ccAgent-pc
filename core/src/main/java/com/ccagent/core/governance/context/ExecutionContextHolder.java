@@ -65,8 +65,10 @@ public class ExecutionContextHolder {
     public static ExecutionContext copyContext() {
         ExecutionContext ctx = CONTEXT.get();
         if (ctx == null) return null;
-        return new ExecutionContext(ctx.getStage(), ctx.getSessionId(),
+        ExecutionContext copy = new ExecutionContext(ctx.getStage(), ctx.getSessionId(),
                 ctx.getWorkspaceRoot(), ctx.getSeqId());
+        copy.setSkillsPrompt(ctx.getSkillsPrompt());
+        return copy;
     }
 
     /**

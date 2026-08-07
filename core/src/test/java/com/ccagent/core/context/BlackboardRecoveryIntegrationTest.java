@@ -67,6 +67,13 @@ class BlackboardRecoveryIntegrationTest {
 
         artifactStore = new FileArtifactStore();
         planRepo = new ExecutionPlanRepository(dataSource);
+
+        // 清理上一测试残留的 RUNNING 状态 plan，避免 recoverInterruptedPlans 查到跨测试数据
+        try (var conn = dataSource.getConnection();
+             var stmt = conn.createStatement()) {
+            stmt.execute("DELETE FROM execution_plan");
+            stmt.execute("DELETE FROM execution_step");
+        } catch (Exception ignored) {}
     }
 
     @AfterEach
@@ -107,7 +114,7 @@ class BlackboardRecoveryIntegrationTest {
         when(mockExpert.execute(anyString(), any(), any(), anyString(), any()))
                 .thenAnswer(inv -> {
                     int n = execCount.incrementAndGet();
-                    if (n == 1) return "analysis-data"; // S1 成功
+                    if (n == 1) return java.util.Map.of("analysis", "analysis-data"); // S1 成功
                     throw new RuntimeException("模拟崩溃"); // S2 失败
                 });
 
@@ -116,7 +123,7 @@ class BlackboardRecoveryIntegrationTest {
 
         // 持久化 Plan
         int planVersion = planRepo.createPlan(sessionId, plan);
-        planRepo.updatePlanStatus(sessionId, planVersion, "EXECUTING");
+        planRepo.updatePlanStatus(sessionId, planVersion, "RUNNING");
 
         // 执行（会因 S2 崩溃而失败）
         String recoveryKey = sessionId + "_" + planVersion;
@@ -156,8 +163,8 @@ class BlackboardRecoveryIntegrationTest {
         when(freshExpert.execute(anyString(), any(), any(), anyString(), any()))
                 .thenAnswer(inv -> {
                     int n = freshCount.incrementAndGet();
-                    if (n == 1) return "code-data"; // S2
-                    return "summary-data"; // S3
+                    if (n == 1) return java.util.Map.of("code", "code-data"); // S2
+                    return java.util.Map.of("summary", "summary-data"); // S3
                 });
         when(expertRegistry.getExpert(anyString())).thenReturn(freshExpert);
 
@@ -276,6 +283,42 @@ class BlackboardRecoveryIntegrationTest {
         task.putArtifact("new-key", "new-value");
         assertThat(task.<String>getArtifact("new-key").join()).isEqualTo("new-value");
 
+        task.close();
+    }
+
+    /**
+     * 场景5：用户手动删除黑板产物文件后，恢复时能检测到缺失 Key（供上层决策重跑）
+     */
+    @Test
+    void shouldDetectManuallyDeletedArtifactAsMissing() {
+        Plan plan = new Plan("deleted", List.of(), List.of());
+        String seqId = "seq-deleted";
+        String workspaceRoot = tempDir.toString();
+
+        // 先持久化产物
+        TaskContextImpl writer = new TaskContextImpl(seqId, plan, artifactStore, workspaceRoot);
+        writer.markPersistent("analysis");
+        writer.putArtifact("analysis", "analysis-data");
+        writer.close();
+        waitForAsyncSave(tempDir, seqId, "analysis");
+
+        // 模拟用户手动删除产物文件（清单仍在）
+        Path artifact = tempDir.resolve(".codepal/cache/artifacts/" + seqId + "/analysis.json");
+        assertThat(artifact).exists();
+        try {
+            java.nio.file.Files.delete(artifact);
+        } catch (Exception e) {
+            throw new AssertionError("删除产物文件失败", e);
+        }
+
+        // 重启恢复：缺失 Key 被检测出来，未进入 restoredKeys
+        TaskContextImpl task = new TaskContextImpl(seqId, plan, artifactStore, workspaceRoot);
+        task.restoreFromDisk(seqId);
+        assertThat(task.getMissingKeys()).contains("analysis");
+        assertThat(task.getRestoredKeys()).doesNotContain("analysis");
+
+        // 缺失产物不可用（futures 未完成，挂起等待生产者重跑）
+        assertThat(task.getArtifact("analysis").isDone()).isFalse();
         task.close();
     }
 

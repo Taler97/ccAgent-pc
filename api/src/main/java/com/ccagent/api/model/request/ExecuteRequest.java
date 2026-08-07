@@ -14,6 +14,8 @@ public class ExecuteRequest {
     private String prompt;
     private boolean autoMode;
     private List<Map<String, String>> history;
+    /** 会话级启用的 skill.md 名称列表（模式 A，可空） */
+    private List<String> skills;
 
     public ExecuteRequest() {}
 
@@ -38,4 +40,6 @@ public class ExecuteRequest {
     public void setAutoMode(boolean autoMode) { this.autoMode = autoMode; }
     public List<Map<String, String>> getHistory() { return history; }
     public void setHistory(List<Map<String, String>> history) { this.history = history; }
+    public List<String> getSkills() { return skills; }
+    public void setSkills(List<String> skills) { this.skills = skills; }
 }

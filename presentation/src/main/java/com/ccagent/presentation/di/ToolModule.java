@@ -40,6 +40,13 @@ public class ToolModule {
         return toolRegistry;
     }
 
+    /**
+     * 返回具体注册表（供 MCP 等需要动态注册的实现使用）
+     */
+    public DefaultToolRegistry getToolRegistryImpl() {
+        return toolRegistry;
+    }
+
     public McpPort getMcpAdapter() {
         return mcpAdapter;
     }

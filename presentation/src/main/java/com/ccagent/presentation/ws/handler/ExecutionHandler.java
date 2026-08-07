@@ -65,9 +65,8 @@ public class ExecutionHandler extends HandlerSupport implements WsMessageHandler
             @Override
             public void onComplete() {
                 sendAgentStatus(sender, seqId, "IDLE", "");
-                sender.send(new Envelope("EXECUTION_RESULT", seqId,
-                        Instant.now().toString(),
-                        "{\"status\":\"COMPLETED\"}"));
+                // 不重复发送 EXECUTION_RESULT：SimpleOrchestrator 已通过 onNext 发送带 token 统计的结果消息，
+                // 此处再发 {"status":"COMPLETED"} 会覆盖云端 conversation 的 token 数据（同 seqId 覆盖保存）
             }
         });
     }

@@ -30,8 +30,8 @@ public class NoteTakerExpert extends BaseExpert {
     }
 
     @Override
-    public String execute(String task, TaskScope taskScope, Map<String, Object> inputs,
-                          String workspaceRoot, StreamObserver<StreamChunk> observer) {
+    protected String executeLegacy(String task, TaskScope taskScope, Map<String, Object> inputs,
+                                   String workspaceRoot, StreamObserver<StreamChunk> observer) {
         pushStatus(observer, "RUNNING", "开始记录笔记: " + truncate(task, 50));
 
         String result = runReActLoop(SYSTEM_PROMPT, task, workspaceRoot, observer);

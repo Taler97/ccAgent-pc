@@ -91,9 +91,9 @@ public class FileOperationTool implements ToolExtensionPoint {
 
     private void validatePath(String path, String workspaceRoot, String paramName) {
         String resolved = PathUtil.resolve(workspaceRoot, path);
-        if (!PathUtil.isSubPath(workspaceRoot, resolved)) {
+        if (!PathUtil.isAllowedPath(workspaceRoot, resolved)) {
             throw new SecurityException(ErrorCode.PATH_TRAVERSAL_DETECTED,
-                    "参数 " + paramName + " 超出工作区范围: " + path, resolved, workspaceRoot);
+                    "参数 " + paramName + " 超出工作区及白名单范围: " + path, resolved, workspaceRoot);
         }
     }
 

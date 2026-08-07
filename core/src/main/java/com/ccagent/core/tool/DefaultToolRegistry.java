@@ -40,11 +40,12 @@ public class DefaultToolRegistry implements ToolRegistryPort {
         }
         if (workspaceRoot != null && args != null) {
             for (var entry : args.entrySet()) {
-                if ("path".equals(entry.getKey()) && entry.getValue() instanceof String pathStr && !pathStr.isBlank()) {
+                if (("path".equals(entry.getKey()) || "source".equals(entry.getKey()) || "target".equals(entry.getKey()))
+                        && entry.getValue() instanceof String pathStr && !pathStr.isBlank()) {
                     String resolved = PathUtil.resolve(workspaceRoot, pathStr);
-                    if (!PathUtil.isSubPath(workspaceRoot, resolved)) {
+                    if (!PathUtil.isAllowedPath(workspaceRoot, resolved)) {
                         throw new SecurityException(ErrorCode.PATH_TRAVERSAL_DETECTED,
-                                "路径超出工作区范围: " + pathStr, resolved, workspaceRoot);
+                                "路径超出工作区及白名单范围: " + pathStr, resolved, workspaceRoot);
                     }
                 }
             }
@@ -74,6 +75,11 @@ public class DefaultToolRegistry implements ToolRegistryPort {
 
         Tool annotation = executor.getClass().getAnnotation(Tool.class);
         String description = annotation != null ? annotation.description() : executor.getDescription();
+
+        Map<String, Object> props = executor.getParameters();
+        if (props != null && !props.isEmpty()) {
+            parameters.put("properties", props);
+        }
 
         return new ToolDefinition(
                 executor.getName(),

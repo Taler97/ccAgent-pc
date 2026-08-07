@@ -1,0 +1,58 @@
+# 黑板字段 schema 定义 (参考 LangGraph State TypedDict + reducer)
+# 每个 Key 定义类型与合并策略:
+#   type: list / string / map
+#   mergeStrategy:
+#     - replace: 新值覆盖旧值 (默认)
+#     - append:  新值追加到列表 (list 专用)
+#     - merge:   新值合并进 Map (map 专用)
+#   description: 字段语义说明
+#
+# Expert 产出的必须是缩略结构化数据 (不存完整 LLM 返回),
+# 避免下游 context 爆炸.
+
+fields:
+  # ========== 分析类 (researcher 产出) ==========
+  findings:
+    type: list
+    mergeStrategy: append
+    description: "关键发现列表"
+  relevant_files:
+    type: list
+    mergeStrategy: append
+    description: "相关文件路径列表"
+  tech_debt:
+    type: string
+    mergeStrategy: replace
+    description: "技术债评估"
+
+  # ========== 代码类 (writer 产出) ==========
+  code_summary:
+    type: string
+    mergeStrategy: replace
+    description: "当前代码变更摘要"
+  files_changed:
+    type: list
+    mergeStrategy: append
+    description: "已修改文件列表"
+
+  # ========== 决策类 (planner / reviewer 产出) ==========
+  decisions:
+    type: map
+    mergeStrategy: merge
+    description: "关键决策记录"
+
+  # ========== 总结类 (summarizer 产出) ==========
+  summary:
+    type: string
+    mergeStrategy: replace
+    description: "任务总结"
+  next_steps:
+    type: list
+    mergeStrategy: append
+    description: "后续建议步骤"
+
+  # ========== 兜底字段 (老 Expert 兼容) ==========
+  result:
+    type: string
+    mergeStrategy: replace
+    description: "兜底单值产物 (老 Expert 返回 String 时用)"
